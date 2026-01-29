@@ -373,17 +373,19 @@ class TestWorkspaceCommand:
 
         # ディレクトリ構造の確認
         airlock_path = project_dir / ".airlock"
+        mappings_path = project_dir / ".airlock_mappings"
         assert airlock_path.exists()
         assert (airlock_path / "data").exists()
-        assert (airlock_path / ".mapping").exists()
+        assert mappings_path.exists()
         assert (airlock_path / "output").exists()
         assert (airlock_path / "README.md").exists()
         assert (airlock_path / "PROMPT.md").exists()
         assert (airlock_path / ".gitignore").exists()
+        assert (mappings_path / ".gitignore").exists()
 
         # 匿名化ファイルの確認
         assert (airlock_path / "data" / "test_data.csv").exists()
-        assert (airlock_path / ".mapping" / "test_data.mapping.enc").exists()
+        assert (mappings_path / "test_data.mapping.enc").exists()
 
     def test_workspace_status(self, tmp_path, sample_csv):
         """ステータス表示"""
@@ -449,7 +451,9 @@ class TestWorkspaceCommand:
         ], input="r\nr\ng\ng\n")
 
         airlock_path = project_dir / ".airlock"
+        mappings_path = project_dir / ".airlock_mappings"
         assert airlock_path.exists()
+        assert mappings_path.exists()
 
         # 削除
         result = runner.invoke(app, [
@@ -461,6 +465,7 @@ class TestWorkspaceCommand:
         assert result.exit_code == 0
         assert "削除しました" in result.output
         assert not airlock_path.exists()
+        assert not mappings_path.exists()
 
     def test_workspace_restore(self, tmp_path, sample_csv):
         """結果の復元"""
@@ -526,12 +531,15 @@ class TestWorkspaceCommand:
             "-p", "testpassword123",
         ], input="r\nr\ng\ng\n")
 
-        # .gitignoreの内容確認
+        # .airlock/.gitignoreの内容確認
         gitignore_path = project_dir / ".airlock" / ".gitignore"
         content = gitignore_path.read_text()
+        assert "airlock.json" in content
 
-        assert ".mapping/" in content
-        assert "*.enc" in content
+        # .airlock_mappings/.gitignoreの内容確認（全ファイル除外）
+        mappings_gitignore_path = project_dir / ".airlock_mappings" / ".gitignore"
+        mappings_content = mappings_gitignore_path.read_text()
+        assert "*" in mappings_content
 
     def test_workspace_prompt_md_content(self, tmp_path, sample_csv):
         """PROMPT.mdの内容確認"""
@@ -627,10 +635,11 @@ class TestWorkspaceCommand:
 
         # ファイルが作成されていることを確認
         airlock_path = project_dir / ".airlock"
+        mappings_path = project_dir / ".airlock_mappings"
         assert (airlock_path / "data" / "file1.csv").exists()
         assert (airlock_path / "data" / "file2.csv").exists()
-        assert (airlock_path / ".mapping" / "file1.mapping.enc").exists()
-        assert (airlock_path / ".mapping" / "file2.mapping.enc").exists()
+        assert (mappings_path / "file1.mapping.enc").exists()
+        assert (mappings_path / "file2.mapping.enc").exists()
 
         # 匿名化されていることを確認
         anon_df1 = pd.read_csv(airlock_path / "data" / "file1.csv")
@@ -800,3 +809,328 @@ class TestWorkspaceCommand:
         restored_df = pd.read_csv(results_dir / "monthly" / "report.csv")
         assert "P001" in restored_df["患者ID"].values
         assert "山田太郎" in restored_df["氏名"].values
+
+
+class TestChatCommand:
+    """chat コマンドのテスト"""
+
+    def test_chat_help(self):
+        """chatコマンドのヘルプ"""
+        result = runner.invoke(app, ["chat", "--help"])
+        assert result.exit_code == 0
+        assert "ローカルLLM" in result.output or "Ollama" in result.output
+        assert "--model" in result.output
+        assert "--file" in result.output
+
+    def test_chat_no_ollama(self, tmp_path, monkeypatch):
+        """Ollamaが起動していない場合"""
+        import ollama
+
+        def mock_list():
+            raise Exception("Connection refused")
+
+        monkeypatch.setattr(ollama, "list", mock_list)
+
+        result = runner.invoke(app, ["chat", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "Ollamaに接続できません" in result.output
+
+    def test_chat_model_not_found(self, tmp_path, monkeypatch):
+        """指定したモデルがない場合"""
+        import ollama
+
+        def mock_list():
+            return {"models": [{"name": "other-model:latest"}]}
+
+        monkeypatch.setattr(ollama, "list", mock_list)
+
+        result = runner.invoke(app, ["chat", str(tmp_path), "-m", "llama3.1:8b"])
+        assert result.exit_code == 1
+        assert "モデル 'llama3.1:8b' が見つかりません" in result.output
+
+
+class TestChatHelperFunctions:
+    """chatコマンドのヘルパー関数テスト"""
+
+    def test_lookup_anon_id(self):
+        """ANON_IDから元の値を検索"""
+        from dataairlock.cli import _lookup_anon_id
+
+        mappings = {
+            "氏名": {
+                "action": "replaced",
+                "values": {
+                    "山田太郎": "ANON_NAME_001",
+                    "鈴木花子": "ANON_NAME_002",
+                }
+            }
+        }
+
+        result = _lookup_anon_id("ANON_NAME_001", mappings)
+        assert result is not None
+        assert "山田太郎" in result
+
+        result = _lookup_anon_id("ANON_UNKNOWN", mappings)
+        assert result is None
+
+    def test_lookup_original(self):
+        """元の値からANON_IDを検索"""
+        from dataairlock.cli import _lookup_original
+
+        mappings = {
+            "氏名": {
+                "action": "replaced",
+                "values": {
+                    "山田太郎": "ANON_NAME_001",
+                    "鈴木花子": "ANON_NAME_002",
+                }
+            }
+        }
+
+        result = _lookup_original("山田太郎", mappings)
+        assert result is not None
+        assert "ANON_NAME_001" in result
+
+        result = _lookup_original("佐藤一郎", mappings)
+        assert result is None
+
+    def test_describe_data_structure(self, tmp_path):
+        """データ構造の説明"""
+        from dataairlock.cli import _describe_data_structure
+
+        csv_path = tmp_path / "test.csv"
+        df = pd.DataFrame({
+            "ID": ["ANON_001", "ANON_002"],
+            "氏名": ["ANON_NAME_001", "ANON_NAME_002"],
+            "年齢": [30, 40],
+        })
+        df.to_csv(csv_path, index=False)
+
+        result = _describe_data_structure(csv_path)
+        assert "test.csv" in result
+        assert "ID" in result
+        assert "氏名" in result
+        assert "年齢" in result
+
+    def test_describe_data_structure_unsupported(self, tmp_path):
+        """サポートされていないファイル形式"""
+        from dataairlock.cli import _describe_data_structure
+
+        txt_path = tmp_path / "test.txt"
+        txt_path.write_text("test")
+
+        result = _describe_data_structure(txt_path)
+        assert "サポートされていない" in result
+
+    def test_generate_claude_prompt(self):
+        """Claude Code用プロンプト生成"""
+        from dataairlock.cli import _generate_claude_prompt
+
+        workspace_config = {
+            "files": {
+                "data": {
+                    "name": "data.csv",
+                    "original": "raw/data.csv",
+                    "pii_columns": ["氏名", "患者ID"],
+                }
+            }
+        }
+
+        result = _generate_claude_prompt("患者ごとの来院回数を集計", workspace_config)
+        assert "患者ごとの来院回数を集計" in result
+        assert "data.csv" in result
+        assert "ANON_" in result
+        assert "output/" in result
+
+    def test_build_chat_system_prompt(self):
+        """システムプロンプトの構築"""
+        from dataairlock.cli import _build_chat_system_prompt
+        from pathlib import Path
+
+        mappings = {
+            "氏名": {
+                "action": "replaced",
+                "values": {
+                    "山田太郎": "ANON_NAME_001",
+                }
+            }
+        }
+
+        workspace_config = {
+            "created_at": "2024-01-01T00:00:00",
+            "files": {
+                "data": {
+                    "name": "data.csv",
+                    "pii_columns": ["氏名"],
+                }
+            }
+        }
+
+        result = _build_chat_system_prompt(mappings, workspace_config, None)
+
+        assert "DataAirlock" in result
+        assert "ANON_ID" in result
+        assert "氏名" in result
+        assert "山田太郎" in result
+        assert "ANON_NAME_001" in result
+
+    def test_build_chat_system_prompt_with_file(self, tmp_path):
+        """ファイル指定ありのシステムプロンプト"""
+        from dataairlock.cli import _build_chat_system_prompt
+
+        current_file = tmp_path / "result.csv"
+        current_file.touch()
+
+        result = _build_chat_system_prompt(None, None, current_file)
+
+        assert "result.csv" in result
+
+    def test_get_all_mapping_dirs(self, tmp_path):
+        """マッピングディレクトリの取得（新旧両方）"""
+        from dataairlock.cli import _get_all_mapping_dirs
+
+        dirs = _get_all_mapping_dirs(tmp_path)
+
+        assert len(dirs) == 2
+        assert tmp_path / ".airlock_mappings" in dirs
+        assert tmp_path / ".airlock" / ".mapping" in dirs
+
+    def test_load_all_mappings_new_location(self, tmp_path):
+        """新しいマッピングディレクトリからの読み込み"""
+        from dataairlock.cli import _load_all_mappings
+        from dataairlock.anonymizer import save_mapping
+
+        # 新しい場所にマッピングを作成
+        new_mappings_dir = tmp_path / ".airlock_mappings"
+        new_mappings_dir.mkdir()
+
+        mapping = {
+            "metadata": {"test": True},
+            "氏名": {
+                "action": "replaced",
+                "values": {"山田太郎": "ANON_NAME_001"}
+            }
+        }
+        save_mapping(mapping, new_mappings_dir / "test.mapping.enc", "testpass")
+
+        result = _load_all_mappings([new_mappings_dir], "testpass")
+
+        assert "氏名" in result
+        assert result["氏名"]["values"]["山田太郎"] == "ANON_NAME_001"
+
+    def test_load_all_mappings_old_location(self, tmp_path):
+        """旧マッピングディレクトリからの読み込み"""
+        from dataairlock.cli import _load_all_mappings
+        from dataairlock.anonymizer import save_mapping
+
+        # 旧場所にマッピングを作成
+        old_mappings_dir = tmp_path / ".airlock" / ".mapping"
+        old_mappings_dir.mkdir(parents=True)
+
+        mapping = {
+            "metadata": {"test": True},
+            "患者ID": {
+                "action": "replaced",
+                "values": {"P001": "ANON_ID_001"}
+            }
+        }
+        save_mapping(mapping, old_mappings_dir / "old.mapping.enc", "testpass")
+
+        result = _load_all_mappings([old_mappings_dir], "testpass")
+
+        assert "患者ID" in result
+        assert result["患者ID"]["values"]["P001"] == "ANON_ID_001"
+
+    def test_load_all_mappings_both_locations(self, tmp_path):
+        """新旧両方のマッピングディレクトリからの読み込み"""
+        from dataairlock.cli import _load_all_mappings, _get_all_mapping_dirs
+        from dataairlock.anonymizer import save_mapping
+
+        # 新しい場所にマッピングを作成
+        new_mappings_dir = tmp_path / ".airlock_mappings"
+        new_mappings_dir.mkdir()
+
+        mapping1 = {
+            "metadata": {"test": True},
+            "氏名": {
+                "action": "replaced",
+                "values": {"山田太郎": "ANON_NAME_001"}
+            }
+        }
+        save_mapping(mapping1, new_mappings_dir / "new.mapping.enc", "testpass")
+
+        # 旧場所にマッピングを作成
+        old_mappings_dir = tmp_path / ".airlock" / ".mapping"
+        old_mappings_dir.mkdir(parents=True)
+
+        mapping2 = {
+            "metadata": {"test": True},
+            "患者ID": {
+                "action": "replaced",
+                "values": {"P001": "ANON_ID_001"}
+            }
+        }
+        save_mapping(mapping2, old_mappings_dir / "old.mapping.enc", "testpass")
+
+        # 両方のディレクトリを渡す
+        dirs = _get_all_mapping_dirs(tmp_path)
+        result = _load_all_mappings(dirs, "testpass")
+
+        # 両方のマッピングが読み込まれていること
+        assert "氏名" in result
+        assert "患者ID" in result
+
+
+class TestLLMClient:
+    """LLMClientのテスト"""
+
+    def test_llm_client_init(self):
+        """初期化テスト"""
+        from dataairlock.llm_client import LLMClient
+
+        client = LLMClient()
+        assert client.model == "llama3.1:8b"
+        assert client.messages == []
+        assert client.system_prompt is None
+
+    def test_llm_client_custom_model(self):
+        """カスタムモデル"""
+        from dataairlock.llm_client import LLMClient
+
+        client = LLMClient(model="llama3.2")
+        assert client.model == "llama3.2"
+
+    def test_llm_client_set_system_prompt(self):
+        """システムプロンプトの設定"""
+        from dataairlock.llm_client import LLMClient
+
+        client = LLMClient()
+        client.set_system_prompt("You are a helpful assistant.")
+        assert client.system_prompt == "You are a helpful assistant."
+
+    def test_llm_client_reset(self):
+        """履歴リセット"""
+        from dataairlock.llm_client import LLMClient
+
+        client = LLMClient()
+        client.messages = [{"role": "user", "content": "test"}]
+        client.reset()
+        assert client.messages == []
+
+    def test_llm_client_chat_mock(self, monkeypatch):
+        """チャットのモックテスト"""
+        import ollama
+        from dataairlock.llm_client import LLMClient
+
+        def mock_chat(model, messages, **kwargs):
+            return {"message": {"content": "Hello! I am a test response."}}
+
+        monkeypatch.setattr(ollama, "chat", mock_chat)
+
+        client = LLMClient()
+        response = client.chat("Hello")
+
+        assert response == "Hello! I am a test response."
+        assert len(client.messages) == 2  # user + assistant
+        assert client.messages[0]["role"] == "user"
+        assert client.messages[1]["role"] == "assistant"

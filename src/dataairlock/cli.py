@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import ollama
 import pandas as pd
 import typer
 from rich.console import Console
@@ -46,7 +47,7 @@ console = Console()
 # ワークスペース設定
 AIRLOCK_DIR = ".airlock"
 AIRLOCK_DATA_DIR = "data"
-AIRLOCK_MAPPING_DIR = ".mapping"
+AIRLOCK_MAPPINGS_DIR = ".airlock_mappings"  # プロジェクトルートに配置
 AIRLOCK_OUTPUT_DIR = "output"
 AIRLOCK_CONFIG = "airlock.json"
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
@@ -923,15 +924,14 @@ def _save_workspace_config(directory: Path, config: dict) -> None:
 
 def _generate_airlock_gitignore() -> str:
     """airlock用.gitignoreを生成"""
-    return """# DataAirlock - 機密データ
-# マッピングファイル（復元用キー）
-.mapping/
-*.enc
-
-# ローカル設定
-.password
+    return """# DataAirlock - ローカル設定
 airlock.json
 """
+
+
+def _generate_mappings_gitignore() -> str:
+    """マッピングディレクトリ用.gitignoreを生成（全ファイル除外）"""
+    return "*\n"
 
 
 def _generate_airlock_readme(airlock_path: Path) -> str:
@@ -944,7 +944,8 @@ def _generate_airlock_readme(airlock_path: Path) -> str:
 
 - `data/` - 匿名化済みデータ（Claude Codeに渡してOK）
 - `output/` - Claude Codeの出力先
-- `.mapping/` - 復元用マッピング（⚠️ 機密・Git除外）
+
+※ 復元用マッピングは `../{AIRLOCK_MAPPINGS_DIR}/` に保存されています（Git除外）
 
 ## 使い方
 
@@ -965,7 +966,7 @@ def _generate_airlock_readme(airlock_path: Path) -> str:
 ## 注意事項
 
 - `ANON_` で始まるIDは匿名化された値です。そのまま保持してください
-- `.mapping/` ディレクトリは絶対にGitにコミットしないでください
+- `../{AIRLOCK_MAPPINGS_DIR}/` ディレクトリは絶対にGitにコミットしないでください
 - 結果ファイルは `output/` に保存することを推奨します
 """
 
@@ -997,22 +998,32 @@ def _generate_prompt_md(files_info: list[dict]) -> str:
 """
 
 
+def _get_mappings_path(directory: Path) -> Path:
+    """マッピングディレクトリのパスを取得（プロジェクトルート）"""
+    return directory / AIRLOCK_MAPPINGS_DIR
+
+
 def _init_workspace(directory: Path) -> Path:
     """ワークスペースを初期化"""
     airlock_path = _get_airlock_path(directory)
     data_path = airlock_path / AIRLOCK_DATA_DIR
-    mapping_path = airlock_path / AIRLOCK_MAPPING_DIR
+    mappings_path = _get_mappings_path(directory)  # プロジェクトルートに配置
     output_path = airlock_path / AIRLOCK_OUTPUT_DIR
 
     # ディレクトリ作成
     data_path.mkdir(parents=True, exist_ok=True)
-    mapping_path.mkdir(parents=True, exist_ok=True)
+    mappings_path.mkdir(parents=True, exist_ok=True)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # .gitignore作成
+    # .airlock/.gitignore作成
     gitignore_path = airlock_path / ".gitignore"
     if not gitignore_path.exists():
         gitignore_path.write_text(_generate_airlock_gitignore(), encoding="utf-8")
+
+    # .airlock_mappings/.gitignore作成（全ファイル除外）
+    mappings_gitignore_path = mappings_path / ".gitignore"
+    if not mappings_gitignore_path.exists():
+        mappings_gitignore_path.write_text(_generate_mappings_gitignore(), encoding="utf-8")
 
     return airlock_path
 
@@ -1092,17 +1103,27 @@ def workspace(
 
     # --clean オプション
     if clean:
-        if not airlock_path.exists():
+        mappings_path = _get_mappings_path(project_dir)
+
+        if not airlock_path.exists() and not mappings_path.exists():
             console.print(f"[yellow]ワークスペースが見つかりません: {airlock_path}[/yellow]")
             raise typer.Exit(0)
 
-        console.print(f"[yellow]警告: {airlock_path} を削除します[/yellow]")
+        console.print(f"[yellow]警告: 以下を削除します[/yellow]")
+        if airlock_path.exists():
+            console.print(f"  - {airlock_path}")
+        if mappings_path.exists():
+            console.print(f"  - {mappings_path}")
+
         if not Confirm.ask("本当に削除しますか？"):
             console.print("キャンセルしました")
             raise typer.Exit(0)
 
-        shutil.rmtree(airlock_path)
-        console.print(f"[green]✓ {airlock_path} を削除しました[/green]")
+        if airlock_path.exists():
+            shutil.rmtree(airlock_path)
+        if mappings_path.exists():
+            shutil.rmtree(mappings_path)
+        console.print(f"[green]✓ ワークスペースを削除しました[/green]")
         raise typer.Exit(0)
 
     # --status オプション
@@ -1129,7 +1150,7 @@ def workspace(
         # ファイル一覧
         tree = Tree(f"📂 [cyan]{AIRLOCK_DIR}/[/cyan]")
         data_branch = tree.add(f"📁 {AIRLOCK_DATA_DIR}/")
-        mapping_branch = tree.add(f"📁 {AIRLOCK_MAPPING_DIR}/ [dim](Git除外)[/dim]")
+        mapping_branch = tree.add(f"📁 ../{AIRLOCK_MAPPINGS_DIR}/ [dim](Git除外)[/dim]")
         output_branch = tree.add(f"📁 {AIRLOCK_OUTPUT_DIR}/")
 
         for file_name, file_info in config.get("files", {}).items():
@@ -1189,7 +1210,7 @@ def workspace(
 
         # 復元に使用するマッピングを収集
         all_mappings: dict = {}
-        mapping_dir = airlock_path / AIRLOCK_MAPPING_DIR
+        mapping_dir = _get_mappings_path(project_dir)
 
         for mapping_file in mapping_dir.glob("*.mapping.enc"):
             try:
@@ -1270,7 +1291,7 @@ def workspace(
 
         # マッピングを収集
         all_mappings: dict = {}
-        mapping_dir = airlock_path / AIRLOCK_MAPPING_DIR
+        mapping_dir = _get_mappings_path(project_dir)
 
         for mapping_file in mapping_dir.glob("*.mapping.enc"):
             try:
@@ -1476,7 +1497,7 @@ def workspace(
 
             # ファイル保存
             data_output = airlock_path / AIRLOCK_DATA_DIR / f"{file_stem}.csv"
-            mapping_output = airlock_path / AIRLOCK_MAPPING_DIR / f"{file_stem}.mapping.enc"
+            mapping_output = _get_mappings_path(project_dir) / f"{file_stem}.mapping.enc"
 
             save_dataframe(anonymized_df, data_output)
             save_mapping(full_mapping, mapping_output, password)
@@ -1624,7 +1645,7 @@ def workspace(
         file_stem = add_path.stem
         output_ext = add_path.suffix
         data_output = airlock_path / AIRLOCK_DATA_DIR / f"{file_stem}{output_ext}"
-        mapping_output = airlock_path / AIRLOCK_MAPPING_DIR / f"{file_stem}.mapping.enc"
+        mapping_output = _get_mappings_path(project_dir) / f"{file_stem}.mapping.enc"
 
         try:
             result, mapping = anonymize_document(add_path, data_output, selected_strategy)  # type: ignore
@@ -1666,10 +1687,11 @@ def workspace(
             f"[green]✅ ワークスペースを{'作成' if is_new_workspace else '更新'}しました[/green]\n\n"
             f"📂 {airlock_path.relative_to(project_dir)}/\n"
             f"├── {AIRLOCK_DATA_DIR}/{file_stem}{output_ext}      [dim]# 匿名化済み[/dim]\n"
-            f"├── {AIRLOCK_MAPPING_DIR}/{file_stem}.mapping.enc\n"
             f"├── {AIRLOCK_OUTPUT_DIR}/              [dim]# 結果出力先[/dim]\n"
             f"├── PROMPT.md\n"
             f"└── README.md\n\n"
+            f"📂 {AIRLOCK_MAPPINGS_DIR}/\n"
+            f"└── {file_stem}.mapping.enc  [dim]# 復元用（Git除外）[/dim]\n\n"
             f"  置換数: {result.total_matches}件\n\n"
             f"[bold]🚀 Claude Code を起動するには:[/bold]\n"
             f"   [cyan]cd {airlock_path} && claude[/cyan]\n\n"
@@ -1776,7 +1798,7 @@ def workspace(
     # ファイル保存
     file_stem = add_path.stem
     data_output = airlock_path / AIRLOCK_DATA_DIR / f"{file_stem}.csv"
-    mapping_output = airlock_path / AIRLOCK_MAPPING_DIR / f"{file_stem}.mapping.enc"
+    mapping_output = _get_mappings_path(project_dir) / f"{file_stem}.mapping.enc"
 
     save_dataframe(anonymized_df, data_output)
     save_mapping(full_mapping, mapping_output, password)
@@ -1811,16 +1833,463 @@ def workspace(
         f"[green]✅ ワークスペースを{'作成' if is_new_workspace else '更新'}しました[/green]\n\n"
         f"📂 {airlock_path.relative_to(project_dir)}/\n"
         f"├── {AIRLOCK_DATA_DIR}/{file_stem}.csv      [dim]# 匿名化済み[/dim]\n"
-        f"├── {AIRLOCK_MAPPING_DIR}/{file_stem}.mapping.enc\n"
         f"├── {AIRLOCK_OUTPUT_DIR}/              [dim]# 結果出力先[/dim]\n"
         f"├── PROMPT.md\n"
         f"└── README.md\n\n"
+        f"📂 {AIRLOCK_MAPPINGS_DIR}/\n"
+        f"└── {file_stem}.mapping.enc  [dim]# 復元用（Git除外）[/dim]\n\n"
         f"[bold]🚀 Claude Code を起動するには:[/bold]\n"
         f"   [cyan]cd {airlock_path} && claude[/cyan]\n\n"
         f"[bold]📥 結果を復元するには:[/bold]\n"
         f"   [cyan]dataairlock workspace {project_dir} --restore output/result.csv[/cyan]",
         title="🔒 完了",
     ))
+
+
+# =============================================================================
+# Chat コマンド（ローカルLLM対話モード）
+# =============================================================================
+
+def _build_chat_system_prompt(
+    mapping_data: dict | None,
+    workspace_config: dict | None,
+    current_file: Path | None,
+) -> str:
+    """チャット用システムプロンプトを構築"""
+    prompt_parts = [
+        "あなたはDataAirlockのアシスタントです。",
+        "匿名化されたデータの分析と、データ処理タスクのサポートを行います。",
+        "",
+        "# あなたの能力",
+        "1. ANON_ID（匿名化ID）と実際の値の照合",
+        "2. データ構造の説明",
+        "3. Claude Code や Codex に渡すプロンプトの生成・提案",
+        "4. 結果ファイルの解釈サポート",
+        "",
+    ]
+
+    # マッピング情報を追加
+    if mapping_data:
+        prompt_parts.append("# 利用可能なマッピング情報")
+        for col_name, col_info in mapping_data.items():
+            if col_name == "metadata":
+                continue
+            if "values" in col_info:
+                values = col_info["values"]
+                prompt_parts.append(f"## 列: {col_name}")
+                prompt_parts.append(f"  - 匿名化方式: {col_info.get('action', '不明')}")
+                prompt_parts.append(f"  - マッピング数: {len(values)}件")
+                # サンプルを数件表示
+                sample_count = min(5, len(values))
+                samples = list(values.items())[:sample_count]
+                prompt_parts.append("  - サンプル:")
+                for original, anon in samples:
+                    prompt_parts.append(f"    - {original} → {anon}")
+        prompt_parts.append("")
+
+    # ワークスペース情報を追加
+    if workspace_config:
+        prompt_parts.append("# ワークスペース情報")
+        prompt_parts.append(f"  - 作成日時: {workspace_config.get('created_at', '不明')}")
+        files = workspace_config.get("files", {})
+        if files:
+            prompt_parts.append("  - ファイル:")
+            for file_name, file_info in files.items():
+                pii_cols = file_info.get("pii_columns", file_info.get("pii_types", []))
+                pii_str = f" (匿名化列: {', '.join(pii_cols)})" if pii_cols else ""
+                prompt_parts.append(f"    - {file_info.get('name', file_name)}{pii_str}")
+        prompt_parts.append("")
+
+    # 現在のファイル情報
+    if current_file:
+        prompt_parts.append(f"# 現在読み込み中のファイル: {current_file.name}")
+        prompt_parts.append("")
+
+    prompt_parts.extend([
+        "# 重要な指示",
+        "- ANON_ID の照合を求められたら、マッピング情報から対応する値を探して回答してください",
+        "- データ分析の提案では、具体的なコード例やプロンプト例を提示してください",
+        "- 個人情報の取り扱いには十分注意し、匿名化されたデータを安全に扱うようアドバイスしてください",
+        "- 日本語で回答してください",
+    ])
+
+    return "\n".join(prompt_parts)
+
+
+def _load_all_mappings(mappings_dirs: list[Path], password: str) -> dict:
+    """すべてのマッピングファイルを読み込む（複数ディレクトリ対応）"""
+    all_mappings: dict = {}
+
+    for mappings_dir in mappings_dirs:
+        if not mappings_dir.exists():
+            continue
+
+        for mapping_file in mappings_dir.glob("*.mapping.enc"):
+            try:
+                mapping_data = load_mapping(mapping_file, password)
+                for col_name, col_info in mapping_data.items():
+                    if col_name != "metadata":
+                        all_mappings[col_name] = col_info
+            except Exception:
+                # パスワードが異なるファイルはスキップ
+                pass
+
+    return all_mappings
+
+
+def _get_all_mapping_dirs(project_dir: Path) -> list[Path]:
+    """すべてのマッピングディレクトリパスを取得（新旧両方）"""
+    return [
+        project_dir / AIRLOCK_MAPPINGS_DIR,       # 新: .airlock_mappings/
+        project_dir / AIRLOCK_DIR / ".mapping",   # 旧: .airlock/.mapping/
+    ]
+
+
+def _lookup_anon_id(anon_id: str, mappings: dict) -> str | None:
+    """ANON_IDから元の値を検索"""
+    for col_name, col_info in mappings.items():
+        if "values" in col_info:
+            for original, anon in col_info["values"].items():
+                if anon == anon_id:
+                    return f"{original} (列: {col_name})"
+    return None
+
+
+def _lookup_original(original: str, mappings: dict) -> str | None:
+    """元の値からANON_IDを検索"""
+    for col_name, col_info in mappings.items():
+        if "values" in col_info:
+            for orig, anon in col_info["values"].items():
+                if orig == original:
+                    return f"{anon} (列: {col_name})"
+    return None
+
+
+def _describe_data_structure(file_path: Path) -> str:
+    """ファイルのデータ構造を説明"""
+    try:
+        if file_path.suffix.lower() == ".csv":
+            df = pd.read_csv(file_path, nrows=10)
+        elif file_path.suffix.lower() in [".xlsx", ".xls"]:
+            df = pd.read_excel(file_path, nrows=10)
+        else:
+            return f"サポートされていないファイル形式: {file_path.suffix}"
+
+        lines = [
+            f"## ファイル: {file_path.name}",
+            f"- 列数: {len(df.columns)}",
+            "",
+            "### 列情報:",
+        ]
+
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            sample = str(df[col].iloc[0]) if len(df) > 0 else "N/A"
+            if len(sample) > 30:
+                sample = sample[:30] + "..."
+            lines.append(f"- **{col}** ({dtype}): 例 `{sample}`")
+
+        # ANON_ID列を特定
+        anon_cols = [col for col in df.columns if "ANON_" in str(df[col].iloc[0]) if len(df) > 0]
+        if anon_cols:
+            lines.append("")
+            lines.append("### 匿名化された列:")
+            for col in anon_cols:
+                lines.append(f"- {col}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"ファイル読み込みエラー: {e}"
+
+
+def _generate_claude_prompt(task_description: str, workspace_config: dict | None) -> str:
+    """Claude Code / Codex 用のプロンプトを生成"""
+    prompt_parts = [
+        "# タスク",
+        task_description,
+        "",
+    ]
+
+    if workspace_config:
+        files = workspace_config.get("files", {})
+        if files:
+            prompt_parts.append("# 利用可能なデータ")
+            prompt_parts.append("")
+            prompt_parts.append("| ファイル | 元ファイル | 匿名化列 |")
+            prompt_parts.append("|---------|-----------|----------|")
+            for file_name, file_info in files.items():
+                pii_cols = ", ".join(file_info.get("pii_columns", file_info.get("pii_types", []))) or "なし"
+                prompt_parts.append(f"| data/{file_info.get('name', file_name)} | {file_info.get('original', '不明')} | {pii_cols} |")
+            prompt_parts.append("")
+
+    prompt_parts.extend([
+        "# 重要なルール",
+        "",
+        "1. `ANON_` で始まるIDはそのまま保持してください",
+        "2. 結果は `output/` ディレクトリに保存してください",
+        "3. 新しい列を追加してもANON_ID列は削除しないでください",
+        "",
+        "# 出力形式",
+        "",
+        "処理結果はCSV形式で `output/` に保存してください。",
+    ])
+
+    return "\n".join(prompt_parts)
+
+
+@app.command()
+def chat(
+    project_dir: Optional[Path] = typer.Argument(
+        None,
+        help="プロジェクトディレクトリ（ワークスペースのルート）",
+    ),
+    password: Optional[str] = typer.Option(
+        None,
+        "-p", "--password",
+        help="マッピングファイルのパスワード",
+    ),
+    model: str = typer.Option(
+        "llama3.1:8b",
+        "-m", "--model",
+        help="使用するOllamaモデル",
+    ),
+    file: Optional[Path] = typer.Option(
+        None,
+        "-f", "--file",
+        help="分析対象のファイル",
+    ),
+):
+    """
+    ローカルLLM（Ollama）を使った対話モード
+
+    \b
+    機能:
+      1. ANON_ID ↔ 実名の照合（マッピングを参照）
+      2. データ構造の説明
+      3. Claude Code / Codex に渡すプロンプトの生成・提案
+      4. 結果ファイルの解釈サポート
+
+    \b
+    使用例:
+      # ワークスペースで起動
+      dataairlock chat ./my_project
+
+      # ファイル指定で起動
+      dataairlock chat ./my_project -f output/result.csv
+
+      # 別のモデルを使用
+      dataairlock chat ./my_project -m llama3.2
+    """
+    from dataairlock.llm_client import LLMClient
+
+    # Ollamaの接続確認
+    try:
+        ollama_models = ollama.list()
+        available_models = [m.get("name", m.get("model", "")) for m in ollama_models.get("models", [])]
+    except Exception as e:
+        console.print(f"[red]エラー: Ollamaに接続できません[/red]")
+        console.print(f"  {e}")
+        console.print()
+        console.print("Ollamaを起動してください:")
+        console.print("  [cyan]ollama serve[/cyan]")
+        raise typer.Exit(1)
+
+    # モデル確認
+    if model not in available_models:
+        console.print(f"[yellow]警告: モデル '{model}' が見つかりません[/yellow]")
+        console.print("  利用可能なモデル:")
+        for m in available_models:
+            console.print(f"    - {m}")
+        console.print()
+        console.print(f"モデルをダウンロード:")
+        console.print(f"  [cyan]ollama pull {model}[/cyan]")
+        raise typer.Exit(1)
+
+    # プロジェクトディレクトリの解決
+    if project_dir is None:
+        project_dir = Path.cwd()
+    project_dir = project_dir.resolve()
+
+    # ワークスペース情報の読み込み
+    workspace_config = _load_workspace_config(project_dir)
+    mapping_dirs = _get_all_mapping_dirs(project_dir)
+    mappings: dict = {}
+
+    # マッピングファイルの存在確認（新旧両方のパスをチェック）
+    has_mappings = any(
+        mapping_dir.exists() and list(mapping_dir.glob("*.mapping.enc"))
+        for mapping_dir in mapping_dirs
+    )
+
+    # パスワードが必要な場合
+    if has_mappings:
+        if password is None:
+            console.print("[bold]マッピングファイルを読み込みます[/bold]")
+            password = get_password_interactive(confirm=False)
+
+        try:
+            mappings = _load_all_mappings(mapping_dirs, password)
+        except Exception as e:
+            console.print(f"[yellow]警告: マッピングの読み込みに失敗: {e}[/yellow]")
+
+    # 対象ファイルの解決
+    current_file: Optional[Path] = None
+    if file:
+        file_path = project_dir / file if not file.is_absolute() else file
+        if file_path.exists():
+            current_file = file_path
+        else:
+            # .airlock内を探す
+            airlock_file = _get_airlock_path(project_dir) / file
+            if airlock_file.exists():
+                current_file = airlock_file
+
+    # LLMクライアント初期化
+    llm = LLMClient(model=model)
+    system_prompt = _build_chat_system_prompt(mappings, workspace_config, current_file)
+    llm.set_system_prompt(system_prompt)
+
+    # ヘッダー表示
+    console.print()
+    console.print(Panel(
+        f"[bold cyan]DataAirlock Chat[/bold cyan]\n\n"
+        f"🤖 モデル: {model}\n"
+        f"📁 プロジェクト: {project_dir}\n"
+        f"🔐 マッピング: {len(mappings)}列" + (f"\n📄 ファイル: {current_file.name}" if current_file else ""),
+        title="🔒 ローカルLLM対話モード",
+    ))
+
+    # コマンド説明
+    console.print()
+    console.print("[bold]コマンド:[/bold]")
+    console.print("  [cyan]/lookup <ANON_ID or 元の値>[/cyan] - IDの照合")
+    console.print("  [cyan]/describe[/cyan] - 現在のファイルの構造を説明")
+    console.print("  [cyan]/prompt <タスク説明>[/cyan] - Claude Code用プロンプト生成")
+    console.print("  [cyan]/load <ファイルパス>[/cyan] - ファイルを読み込む")
+    console.print("  [cyan]/reset[/cyan] - 会話履歴をリセット")
+    console.print("  [cyan]/quit[/cyan] または [cyan]exit[/cyan] - 終了")
+    console.print()
+
+    # 対話ループ
+    while True:
+        try:
+            user_input = Prompt.ask("[bold green]You[/bold green]")
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[cyan]終了します[/cyan]")
+            break
+
+        if not user_input.strip():
+            continue
+
+        user_input = user_input.strip()
+
+        # 終了コマンド
+        if user_input.lower() in ["/quit", "/exit", "exit", "quit"]:
+            console.print("[cyan]終了します[/cyan]")
+            break
+
+        # /lookup コマンド
+        if user_input.startswith("/lookup "):
+            query = user_input[8:].strip()
+            if not query:
+                console.print("[yellow]使用方法: /lookup <ANON_ID or 元の値>[/yellow]")
+                continue
+
+            # ANON_IDから検索
+            result = _lookup_anon_id(query, mappings)
+            if result:
+                console.print(f"[green]✓[/green] {query} → [bold]{result}[/bold]")
+                continue
+
+            # 元の値から検索
+            result = _lookup_original(query, mappings)
+            if result:
+                console.print(f"[green]✓[/green] {query} → [bold]{result}[/bold]")
+                continue
+
+            console.print(f"[yellow]'{query}' は見つかりませんでした[/yellow]")
+            continue
+
+        # /describe コマンド
+        if user_input == "/describe":
+            if current_file is None:
+                console.print("[yellow]ファイルが読み込まれていません[/yellow]")
+                console.print("  使用方法: /load <ファイルパス>")
+                continue
+
+            description = _describe_data_structure(current_file)
+            console.print()
+            console.print(Panel(description, title=f"📊 {current_file.name}"))
+            continue
+
+        # /prompt コマンド
+        if user_input.startswith("/prompt"):
+            task = user_input[7:].strip()
+            if not task:
+                console.print("[yellow]使用方法: /prompt <タスク説明>[/yellow]")
+                console.print("  例: /prompt 患者ごとの診察回数を集計してください")
+                continue
+
+            prompt = _generate_claude_prompt(task, workspace_config)
+            console.print()
+            console.print(Panel(prompt, title="📝 Claude Code 用プロンプト"))
+            console.print()
+            console.print("[dim]このプロンプトをClaude Codeにコピー＆ペーストしてください[/dim]")
+            continue
+
+        # /load コマンド
+        if user_input.startswith("/load "):
+            file_path_str = user_input[6:].strip()
+            if not file_path_str:
+                console.print("[yellow]使用方法: /load <ファイルパス>[/yellow]")
+                continue
+
+            file_path = Path(file_path_str)
+            if not file_path.is_absolute():
+                file_path = project_dir / file_path_str
+
+            if not file_path.exists():
+                # .airlock内を探す
+                airlock_file = _get_airlock_path(project_dir) / file_path_str
+                if airlock_file.exists():
+                    file_path = airlock_file
+                else:
+                    console.print(f"[red]ファイルが見つかりません: {file_path_str}[/red]")
+                    continue
+
+            current_file = file_path
+            console.print(f"[green]✓[/green] {current_file.name} を読み込みました")
+
+            # システムプロンプトを更新
+            system_prompt = _build_chat_system_prompt(mappings, workspace_config, current_file)
+            llm.set_system_prompt(system_prompt)
+            continue
+
+        # /reset コマンド
+        if user_input == "/reset":
+            llm.reset()
+            console.print("[green]✓[/green] 会話履歴をリセットしました")
+            continue
+
+        # LLMに送信
+        console.print()
+        console.print("[bold blue]Assistant[/bold blue]")
+
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True,
+            ) as progress:
+                progress.add_task(description="考え中...", total=None)
+                response = llm.chat(user_input)
+
+            console.print(response)
+        except Exception as e:
+            console.print(f"[red]エラー: {e}[/red]")
+
+        console.print()
 
 
 if __name__ == "__main__":
