@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dataairlock"
+version = "0.1.0"
+description = "個人情報を匿名化してクラウドLLMに安全に渡すためのツール"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.30.0",
+    "pandas>=2.0.0",
+    "cryptography>=42.0.0",
+    "ollama>=0.1.0",
+    "openpyxl>=3.1.0",
+    "typer[all]>=0.9.0",
+    "rich>=13.0.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+dataairlock = "dataairlock.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
