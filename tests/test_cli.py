@@ -1134,3 +1134,217 @@ class TestLLMClient:
         assert len(client.messages) == 2  # user + assistant
         assert client.messages[0]["role"] == "user"
         assert client.messages[1]["role"] == "assistant"
+
+
+class TestWrapCommand:
+    """wrap コマンドのテスト"""
+
+    def test_wrap_help(self):
+        """wrapコマンドのヘルプ"""
+        result = runner.invoke(app, ["wrap", "--help"])
+        assert result.exit_code == 0
+        assert "匿名化レイヤー" in result.output or "CLI" in result.output
+        assert "--command" in result.output
+        assert "--auto-restore" in result.output
+        assert "--shell" in result.output
+
+    def test_wrap_no_workspace(self, tmp_path):
+        """ワークスペースがない場合"""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        result = runner.invoke(app, ["wrap", str(project_dir), "-c", "echo test"])
+        assert result.exit_code == 1
+        assert "ワークスペースが見つかりません" in result.output
+
+    def test_wrap_no_command(self, tmp_path, sample_csv):
+        """コマンドが指定されていない場合"""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        # サンプルCSVをプロジェクトにコピー
+        data_dir = project_dir / "data"
+        data_dir.mkdir()
+        import shutil
+        shutil.copy(sample_csv, data_dir / "test_data.csv")
+
+        # ワークスペース作成
+        runner.invoke(app, [
+            "workspace",
+            str(project_dir),
+            "--add", "data/test_data.csv",
+            "-p", "testpassword123",
+        ], input="r\nr\ng\ng\n")
+
+        # コマンドなしで実行
+        result = runner.invoke(app, ["wrap", str(project_dir)])
+        assert result.exit_code == 0
+        assert "コマンドが指定されていません" in result.output
+
+    def test_wrap_simple_command(self, tmp_path, sample_csv):
+        """単純なコマンドの実行"""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        # サンプルCSVをプロジェクトにコピー
+        data_dir = project_dir / "data"
+        data_dir.mkdir()
+        import shutil
+        shutil.copy(sample_csv, data_dir / "test_data.csv")
+
+        # ワークスペース作成
+        runner.invoke(app, [
+            "workspace",
+            str(project_dir),
+            "--add", "data/test_data.csv",
+            "-p", "testpassword123",
+        ], input="r\nr\ng\ng\n")
+
+        # echoコマンドを実行
+        result = runner.invoke(app, [
+            "wrap",
+            str(project_dir),
+            "-c", "echo 'Hello from wrap'",
+        ])
+        assert result.exit_code == 0
+        assert "実行中" in result.output
+
+    def test_wrap_with_output(self, tmp_path, sample_csv):
+        """出力ファイルを生成するコマンドの実行"""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        # サンプルCSVをプロジェクトにコピー
+        data_dir = project_dir / "data"
+        data_dir.mkdir()
+        import shutil
+        shutil.copy(sample_csv, data_dir / "test_data.csv")
+
+        # ワークスペース作成
+        runner.invoke(app, [
+            "workspace",
+            str(project_dir),
+            "--add", "data/test_data.csv",
+            "-p", "testpassword123",
+        ], input="r\nr\ng\ng\n")
+
+        # output/にファイルを作成するコマンド
+        result = runner.invoke(app, [
+            "wrap",
+            str(project_dir),
+            "-c", "echo 'test output' > output/result.txt",
+        ])
+        assert result.exit_code == 0
+        assert "新しい出力ファイル" in result.output
+
+        # ファイルが作成されていることを確認
+        output_file = project_dir / ".airlock" / "output" / "result.txt"
+        assert output_file.exists()
+
+    def test_wrap_auto_restore(self, tmp_path, sample_csv):
+        """auto-restoreオプションのテスト"""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        # サンプルCSVをプロジェクトにコピー
+        data_dir = project_dir / "data"
+        data_dir.mkdir()
+        import shutil
+        shutil.copy(sample_csv, data_dir / "test_data.csv")
+
+        # ワークスペース作成
+        runner.invoke(app, [
+            "workspace",
+            str(project_dir),
+            "--add", "data/test_data.csv",
+            "-p", "testpassword123",
+        ], input="r\nr\ng\ng\n")
+
+        # コマンド実行中にoutputにコピーする（新規ファイルとして検出させる）
+        airlock_path = project_dir / ".airlock"
+
+        # auto-restoreで復元（cpコマンドでファイルを生成）
+        result = runner.invoke(app, [
+            "wrap",
+            str(project_dir),
+            "-c", "cp data/test_data.csv output/result.csv",
+            "--auto-restore",
+            "-p", "testpassword123",
+        ])
+        assert result.exit_code == 0
+
+        # results/に復元されていることを確認
+        results_dir = project_dir / "results"
+        assert results_dir.exists()
+        assert (results_dir / "result.csv").exists()
+
+        # 復元内容の確認
+        restored_df = pd.read_csv(results_dir / "result.csv")
+        assert "P001" in restored_df["患者ID"].values
+        assert "山田太郎" in restored_df["氏名"].values
+
+    def test_wrap_environment_variables(self, tmp_path, sample_csv):
+        """環境変数が設定されることの確認"""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        # サンプルCSVをプロジェクトにコピー
+        data_dir = project_dir / "data"
+        data_dir.mkdir()
+        import shutil
+        shutil.copy(sample_csv, data_dir / "test_data.csv")
+
+        # ワークスペース作成
+        runner.invoke(app, [
+            "workspace",
+            str(project_dir),
+            "--add", "data/test_data.csv",
+            "-p", "testpassword123",
+        ], input="r\nr\ng\ng\n")
+
+        # 環境変数を出力するコマンド
+        result = runner.invoke(app, [
+            "wrap",
+            str(project_dir),
+            "-c", "echo $DATAAIRLOCK_PROJECT > output/env.txt",
+        ])
+        assert result.exit_code == 0
+
+        # 環境変数が正しく設定されていることを確認
+        env_file = project_dir / ".airlock" / "output" / "env.txt"
+        assert env_file.exists()
+        content = env_file.read_text().strip()
+        assert str(project_dir) in content
+
+    def test_wrap_working_directory(self, tmp_path, sample_csv):
+        """作業ディレクトリが.airlock/であることの確認"""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+
+        # サンプルCSVをプロジェクトにコピー
+        data_dir = project_dir / "data"
+        data_dir.mkdir()
+        import shutil
+        shutil.copy(sample_csv, data_dir / "test_data.csv")
+
+        # ワークスペース作成
+        runner.invoke(app, [
+            "workspace",
+            str(project_dir),
+            "--add", "data/test_data.csv",
+            "-p", "testpassword123",
+        ], input="r\nr\ng\ng\n")
+
+        # pwdを出力するコマンド
+        result = runner.invoke(app, [
+            "wrap",
+            str(project_dir),
+            "-c", "pwd > output/cwd.txt",
+        ])
+        assert result.exit_code == 0
+
+        # .airlock/が作業ディレクトリであることを確認
+        cwd_file = project_dir / ".airlock" / "output" / "cwd.txt"
+        assert cwd_file.exists()
+        content = cwd_file.read_text().strip()
+        assert ".airlock" in content

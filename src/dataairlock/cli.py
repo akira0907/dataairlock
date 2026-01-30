@@ -2,7 +2,9 @@
 
 import getpass
 import json
+import os
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -2290,6 +2292,233 @@ def chat(
             console.print(f"[red]エラー: {e}[/red]")
 
         console.print()
+
+
+# =============================================================================
+# Wrap コマンド（匿名化レイヤー内でCLIツールを実行）
+# =============================================================================
+
+@app.command()
+def wrap(
+    project_dir: Path = typer.Argument(..., help="プロジェクトディレクトリ"),
+    command: Optional[str] = typer.Option(
+        None,
+        "-c", "--command",
+        help="実行するコマンド（未指定なら対話シェル）",
+    ),
+    auto_restore: bool = typer.Option(
+        False,
+        "--auto-restore",
+        help="終了後に自動で結果を復元",
+    ),
+    password: Optional[str] = typer.Option(
+        None,
+        "-p", "--password",
+        help="マッピング復号パスワード",
+    ),
+    shell: bool = typer.Option(
+        False,
+        "--shell",
+        help="対話シェルを起動",
+    ),
+):
+    """
+    匿名化レイヤー内でCLIツールを実行
+
+    \b
+    ワークスペースの .airlock/ ディレクトリ内でコマンドを実行し、
+    終了後に output/ 内の結果を自動検出・復元できます。
+
+    \b
+    使用例:
+      # 対話シェルを起動
+      dataairlock wrap ./my_project --shell
+
+      # Claude Codeを起動
+      dataairlock wrap ./my_project -c "claude"
+
+      # 自動復元付きでコマンド実行
+      dataairlock wrap ./my_project -c "python analyze.py" --auto-restore
+
+      # 引数付きコマンド
+      dataairlock wrap ./my_project -c "claude 'データを分析して'"
+    """
+    project_dir = project_dir.resolve()
+
+    if not project_dir.exists():
+        console.print(f"[red]エラー: ディレクトリが見つかりません: {project_dir}[/red]")
+        raise typer.Exit(1)
+
+    # ワークスペースの存在確認
+    airlock_path = _get_airlock_path(project_dir)
+    if not airlock_path.exists():
+        console.print(f"[red]エラー: ワークスペースが見つかりません: {airlock_path}[/red]")
+        console.print()
+        console.print("先にワークスペースを作成してください:")
+        console.print(f"  [cyan]dataairlock workspace {project_dir} --add <file>[/cyan]")
+        raise typer.Exit(1)
+
+    # 設定読み込み
+    workspace_config = _load_workspace_config(project_dir)
+    if not workspace_config:
+        console.print("[red]エラー: ワークスペース設定が見つかりません[/red]")
+        raise typer.Exit(1)
+
+    # ディレクトリパス
+    data_path = airlock_path / AIRLOCK_DATA_DIR
+    output_path = airlock_path / AIRLOCK_OUTPUT_DIR
+
+    if not data_path.exists():
+        console.print(f"[red]エラー: データディレクトリが見つかりません: {data_path}[/red]")
+        raise typer.Exit(1)
+
+    # output/ ディレクトリがなければ作成
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # 実行前の output/ 内ファイルを記録
+    output_files_before = set(output_path.glob("**/*"))
+
+    # auto-restore の場合はパスワードが必要
+    if auto_restore:
+        mapping_dirs = _get_all_mapping_dirs(project_dir)
+        has_mappings = any(
+            mapping_dir.exists() and list(mapping_dir.glob("*.mapping.enc"))
+            for mapping_dir in mapping_dirs
+        )
+
+        if has_mappings and password is None:
+            console.print("[bold]復元用パスワードを入力してください[/bold]")
+            password = get_password_interactive(confirm=False)
+
+    # ヘッダー表示
+    console.print()
+    console.print(Panel(
+        f"[bold cyan]DataAirlock Wrap[/bold cyan]\n\n"
+        f"📁 プロジェクト: {project_dir}\n"
+        f"📂 作業ディレクトリ: {airlock_path}\n"
+        f"📄 データ: {data_path}\n"
+        f"📤 出力先: {output_path}" +
+        (f"\n🔄 自動復元: 有効" if auto_restore else ""),
+        title="🔒 匿名化レイヤー",
+    ))
+
+    # 環境変数を設定
+    env = os.environ.copy()
+    env["DATAAIRLOCK_PROJECT"] = str(project_dir)
+    env["DATAAIRLOCK_WORKSPACE"] = str(airlock_path)
+    env["DATAAIRLOCK_DATA"] = str(data_path)
+    env["DATAAIRLOCK_OUTPUT"] = str(output_path)
+
+    # コマンド実行
+    console.print()
+
+    if command:
+        console.print(f"[bold]実行中:[/bold] {command}")
+        console.print()
+
+        # シェル経由でコマンドを実行
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(airlock_path),
+            env=env,
+        )
+        exit_code = result.returncode
+
+    elif shell:
+        # 対話シェルを起動
+        shell_cmd = os.environ.get("SHELL", "/bin/bash")
+        console.print(f"[bold]対話シェルを起動中...[/bold] ({shell_cmd})")
+        console.print("[dim]終了するには 'exit' を入力してください[/dim]")
+        console.print()
+
+        result = subprocess.run(
+            [shell_cmd],
+            cwd=str(airlock_path),
+            env=env,
+        )
+        exit_code = result.returncode
+
+    else:
+        # コマンドもシェルも指定されていない場合
+        console.print("[yellow]コマンドが指定されていません[/yellow]")
+        console.print()
+        console.print("使用方法:")
+        console.print(f"  [cyan]dataairlock wrap {project_dir} -c \"claude\"[/cyan]")
+        console.print(f"  [cyan]dataairlock wrap {project_dir} --shell[/cyan]")
+        raise typer.Exit(0)
+
+    # 終了後の処理
+    console.print()
+
+    # output/ 内の新しいファイルを検出
+    output_files_after = set(output_path.glob("**/*"))
+    new_files = output_files_after - output_files_before
+    new_files = [f for f in new_files if f.is_file()]
+
+    if new_files:
+        console.print(f"[bold]📤 新しい出力ファイル: {len(new_files)}件[/bold]")
+        for f in new_files[:10]:  # 最大10件表示
+            rel_path = f.relative_to(output_path)
+            console.print(f"  - {rel_path}")
+        if len(new_files) > 10:
+            console.print(f"  ... 他 {len(new_files) - 10} 件")
+        console.print()
+
+        if auto_restore:
+            # 自動復元
+            console.print("[bold]結果を復元中...[/bold]")
+
+            mapping_dirs = _get_all_mapping_dirs(project_dir)
+            all_mappings: dict = {}
+
+            if password:
+                try:
+                    all_mappings = _load_all_mappings(mapping_dirs, password)
+                except Exception as e:
+                    console.print(f"[yellow]警告: マッピングの読み込みに失敗: {e}[/yellow]")
+
+            # 復元実行
+            results_dir = project_dir / "results"
+            results_dir.mkdir(parents=True, exist_ok=True)
+            restored_count = 0
+
+            for csv_file in output_path.glob("**/*.csv"):
+                try:
+                    rel_path = csv_file.relative_to(output_path)
+                    output_file = results_dir / rel_path
+                    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+                    df = pd.read_csv(csv_file)
+                    restored_df = deanonymize_dataframe(df, all_mappings)
+                    save_dataframe(restored_df, output_file)
+                    console.print(f"  [green]✓[/green] {rel_path}")
+                    restored_count += 1
+                except Exception as e:
+                    rel_path = csv_file.relative_to(output_path)
+                    console.print(f"  [red]✗[/red] {rel_path}: {e}")
+
+            if restored_count > 0:
+                console.print()
+                console.print(Panel(
+                    f"[green]✅ {restored_count}ファイルを復元しました[/green]\n\n"
+                    f"📂 results/",
+                    title="🔓 完了",
+                ))
+            else:
+                console.print("[yellow]復元対象のCSVファイルがありませんでした[/yellow]")
+        else:
+            # 復元方法を案内
+            console.print("[bold]結果を復元するには:[/bold]")
+            console.print(f"  [cyan]dataairlock workspace {project_dir} --restore-all -p <password>[/cyan]")
+    else:
+        console.print("[dim]新しい出力ファイルはありませんでした[/dim]")
+
+    # 終了コード表示
+    if exit_code != 0:
+        console.print(f"[yellow]コマンドは終了コード {exit_code} で終了しました[/yellow]")
+
+    raise typer.Exit(exit_code)
 
 
 if __name__ == "__main__":
