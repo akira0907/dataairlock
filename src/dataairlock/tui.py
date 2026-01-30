@@ -771,9 +771,12 @@ data/ 内のCSVファイルを読み込んで、基本統計を出力してく�
 
 
 def select_folder() -> Optional[Path]:
-    """フォルダ選択"""
+    """フォルダ選択（カレントディレクトリがデフォルト）"""
+    current_dir = str(Path.cwd())
+
     folder_path = questionary.path(
         "フォルダを選択（パスを入力、またはドラッグ＆ドロップ）:",
+        default=current_dir,
         only_directories=True,
         style=custom_style,
     ).ask()
