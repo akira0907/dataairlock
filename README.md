@@ -1,7 +1,7 @@
 # DataAirlock
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-AGPL%20v3.0-green)
 ![Security](https://img.shields.io/badge/security-local--only-brightgreen)
 ![Status](https://img.shields.io/badge/status-beta-orange)
 
@@ -191,7 +191,7 @@ pytest
 
 ## ライセンス
 
-MIT
+AGPL-3.0
 
 ## 作者
 
