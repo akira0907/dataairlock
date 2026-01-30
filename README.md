@@ -53,6 +53,9 @@ flowchart LR
 # GitHubからインストール
 pip install git+https://github.com/akira0907/dataairlock.git
 
+# 最新版に強制アップデート
+pip install --force-reinstall git+https://github.com/akira0907/dataairlock.git
+
 # または、ローカルでクローンしてインストール
 git clone https://github.com/akira0907/dataairlock.git
 cd dataairlock
