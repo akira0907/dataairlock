@@ -36,8 +36,9 @@ def get_available_models() -> list[str]:
     if not is_ollama_running():
         return []
     try:
-        models = ollama.list()
-        return [m["name"] for m in models.get("models", [])]
+        result = ollama.list()
+        # ollama library returns Pydantic model, access .models attribute
+        return [m.model for m in result.models]
     except Exception:
         return []
 
