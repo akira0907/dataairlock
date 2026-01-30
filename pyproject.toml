@@ -7,12 +7,39 @@ name = "dataairlock"
 version = "0.1.0"
 description = "個人情報を匿名化してクラウドLLMに安全に渡すためのツール"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
+authors = [
+    {name = "akira0907", email = "akira0907@users.noreply.github.com"},
+]
+keywords = [
+    "anonymization",
+    "privacy",
+    "pii",
+    "llm",
+    "data-protection",
+    "gdpr",
+    "japanese",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: Japanese",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
+
 dependencies = [
-    "streamlit>=1.30.0",
     "pandas>=2.0.0",
     "cryptography>=42.0.0",
-    "ollama>=0.1.0",
     "openpyxl>=3.1.0",
     "typer[all]>=0.9.0",
     "rich>=13.0.0",
@@ -24,10 +51,31 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
 ]
+streamlit = [
+    "streamlit>=1.30.0",
+]
+ollama = [
+    "ollama>=0.1.0",
+]
+all = [
+    "dataairlock[streamlit,ollama]",
+]
+
+[project.urls]
+Homepage = "https://github.com/akira0907/dataairlock"
+Repository = "https://github.com/akira0907/dataairlock"
+Issues = "https://github.com/akira0907/dataairlock/issues"
 
 [project.scripts]
 dataairlock = "dataairlock.cli:app"
+dataairlock-tui = "dataairlock.tui:run_tui"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
