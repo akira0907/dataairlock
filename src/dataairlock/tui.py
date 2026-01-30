@@ -46,6 +46,34 @@ AIRLOCK_OUTPUT_DIR = "output"
 AIRLOCK_CONFIG = "airlock.json"
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 
+# 対応AIツール設定
+AI_TOOLS = {
+    "claude": {
+        "name": "Claude Code",
+        "command": "claude",
+        "description": "Anthropic Claude Code CLI",
+        "install_url": "https://claude.ai/code",
+    },
+    "codex": {
+        "name": "OpenAI Codex CLI",
+        "command": "codex",
+        "description": "OpenAI Codex CLI",
+        "install_url": "https://github.com/openai/codex",
+    },
+    "aider": {
+        "name": "Aider",
+        "command": "aider",
+        "description": "AI pair programming in terminal",
+        "install_url": "https://aider.chat",
+    },
+    "custom": {
+        "name": "カスタムコマンド",
+        "command": None,  # ユーザーが指定
+        "description": "任意のコマンドを実行",
+        "install_url": None,
+    },
+}
+
 # カスタムスタイル
 custom_style = Style([
     ('qmark', 'fg:cyan bold'),
@@ -275,13 +303,112 @@ def get_password(confirm: bool = True) -> str | None:
     return password
 
 
-def launch_claude_code(airlock_path: Path) -> int:
-    """Claude Code を起動"""
+def check_ai_tool_available(tool_key: str) -> bool:
+    """AIツールが利用可能かチェック"""
+    tool = AI_TOOLS.get(tool_key)
+    if not tool or tool_key == "custom":
+        return tool_key == "custom"
+
+    command = tool["command"]
+    if not command:
+        return False
+
+    try:
+        subprocess.run(
+            [command, "--version"],
+            capture_output=True,
+            timeout=5,
+        )
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def get_available_ai_tools() -> list[str]:
+    """利用可能なAIツールのリストを取得"""
+    available = []
+    for key in AI_TOOLS:
+        if key == "custom" or check_ai_tool_available(key):
+            available.append(key)
+    return available
+
+
+def select_ai_tool() -> tuple[str, str | None]:
+    """
+    AIツールを選択
+
+    Returns:
+        (tool_key, custom_command)
+        custom_command は tool_key == "custom" の場合のみ設定
+    """
+    available_tools = get_available_ai_tools()
+
+    choices = []
+    for key in ["claude", "codex", "aider", "custom"]:
+        tool = AI_TOOLS[key]
+        if key in available_tools and key != "custom":
+            choices.append(f"✅ {tool['name']} ({tool['command']})")
+        elif key == "custom":
+            choices.append(f"⚙️ {tool['name']}")
+        else:
+            choices.append(f"❌ {tool['name']} (未インストール)")
+
+    choice = questionary.select(
+        "使用するAIツールを選択:",
+        choices=choices,
+        style=custom_style,
+    ).ask()
+
+    if choice is None:
+        return ("", None)
+
+    # 選択からツールキーを特定
+    for key in AI_TOOLS:
+        tool = AI_TOOLS[key]
+        if tool["name"] in choice:
+            if key == "custom":
+                custom_cmd = questionary.text(
+                    "実行するコマンドを入力:",
+                    style=custom_style,
+                ).ask()
+                if not custom_cmd:
+                    return ("", None)
+                return ("custom", custom_cmd.strip())
+            elif "未インストール" in choice:
+                console.print(f"[yellow]{tool['name']} がインストールされていません[/yellow]")
+                if tool.get("install_url"):
+                    console.print(f"[dim]インストール: {tool['install_url']}[/dim]")
+                return ("", None)
+            return (key, None)
+
+    return ("", None)
+
+
+def launch_ai_tool(
+    airlock_path: Path,
+    tool_key: str = "claude",
+    custom_command: str | None = None,
+) -> int:
+    """
+    AIツールを起動
+
+    Args:
+        airlock_path: 作業ディレクトリ
+        tool_key: AI_TOOLSのキー
+        custom_command: カスタムコマンド（tool_key="custom"の場合）
+
+    Returns:
+        終了コード
+    """
+    tool = AI_TOOLS.get(tool_key, AI_TOOLS["claude"])
+    command = custom_command if tool_key == "custom" else tool["command"]
+    tool_name = custom_command if tool_key == "custom" else tool["name"]
+
     console.print()
-    console.print("[bold]🚀 Claude Code を起動しています...[/bold]")
+    console.print(f"[bold]🚀 {tool_name} を起動しています...[/bold]")
     console.print(f"   作業ディレクトリ: {airlock_path}")
     console.print()
-    console.print("[dim]💡 ヒント: 作業が終わったら /exit で終了してください[/dim]")
+    console.print("[dim]💡 ヒント: 作業が終わったら終了してください[/dim]")
     console.print()
 
     # 環境変数を設定
@@ -290,18 +417,33 @@ def launch_claude_code(airlock_path: Path) -> int:
     env["DATAAIRLOCK_DATA"] = str(airlock_path / "data")
     env["DATAAIRLOCK_OUTPUT"] = str(airlock_path / "output")
 
-    # Claude Code を起動
+    # AIツールを起動
     try:
-        result = subprocess.run(
-            ["claude"],
-            cwd=str(airlock_path),
-            env=env,
-        )
+        # コマンドをシェル経由で実行（カスタムコマンド対応）
+        if tool_key == "custom":
+            result = subprocess.run(
+                custom_command,
+                cwd=str(airlock_path),
+                env=env,
+                shell=True,
+            )
+        else:
+            result = subprocess.run(
+                [command],
+                cwd=str(airlock_path),
+                env=env,
+            )
         return result.returncode
     except FileNotFoundError:
-        console.print("[red]エラー: claude コマンドが見つかりません[/red]")
-        console.print("[dim]Claude Code をインストールしてください: https://claude.ai/code[/dim]")
+        console.print(f"[red]エラー: {command} コマンドが見つかりません[/red]")
+        if tool.get("install_url"):
+            console.print(f"[dim]インストール: {tool['install_url']}[/dim]")
         return 1
+
+
+def launch_claude_code(airlock_path: Path) -> int:
+    """Claude Code を起動（互換性のため維持）"""
+    return launch_ai_tool(airlock_path, "claude")
 
 
 def restore_results(project_dir: Path, password: str) -> bool:
@@ -382,7 +524,7 @@ def main_menu() -> str | None:
 
     if has_workspace:
         choices = [
-            "🚀 Claude Code を起動",
+            "🚀 AIツールを起動",
             "📁 ファイルを追加",
             "🔓 結果を復元",
             "📋 ステータス確認",
@@ -522,18 +664,23 @@ def flow_new_project():
     next_action = questionary.select(
         "次のアクションは？",
         choices=[
-            "🚀 Claude Code を起動",
+            "🚀 AIツールを起動",
             "🔙 メニューに戻る",
         ],
         style=custom_style,
     ).ask()
 
-    if next_action == "🚀 Claude Code を起動":
-        flow_launch_claude(password)
+    if next_action == "🚀 AIツールを起動":
+        flow_launch_ai_tool(password)
 
 
 def flow_launch_claude(password: str | None = None):
-    """Claude Code起動フロー"""
+    """Claude Code起動フロー（互換性のため維持）"""
+    flow_launch_ai_tool(password, tool_key="claude")
+
+
+def flow_launch_ai_tool(password: str | None = None, tool_key: str = "", custom_command: str | None = None):
+    """AIツール起動フロー"""
     project_dir = Path.cwd()
     airlock_path = _get_airlock_path(project_dir)
 
@@ -541,8 +688,14 @@ def flow_launch_claude(password: str | None = None):
         console.print("[red]ワークスペースがありません[/red]")
         return
 
-    # Claude Code 起動
-    exit_code = launch_claude_code(airlock_path)
+    # ツールが指定されていない場合は選択
+    if not tool_key:
+        tool_key, custom_command = select_ai_tool()
+        if not tool_key:
+            return
+
+    # AIツール起動
+    exit_code = launch_ai_tool(airlock_path, tool_key, custom_command)
 
     # 終了後
     console.print()
@@ -636,8 +789,8 @@ def show_help():
         "   → フォルダを選択し、複数ファイルを一括匿名化\n\n"
         "2. [cyan]ファイルから開始[/cyan]\n"
         "   → 単一ファイルを選択し、個人情報を匿名化\n\n"
-        "3. [cyan]Claude Code を起動[/cyan]\n"
-        "   → 匿名化されたデータで分析作業\n\n"
+        "3. [cyan]AIツールを起動[/cyan]\n"
+        "   → Claude Code / Codex CLI / Aider などで分析\n\n"
         "4. [cyan]結果を復元[/cyan]\n"
         "   → PERSON_001 などを元の名前に戻す\n\n"
         "[dim]詳細: https://github.com/akira0907/dataairlock[/dim]",
@@ -1105,14 +1258,14 @@ def flow_folder_project():
     next_action = questionary.select(
         "次のアクションは？",
         choices=[
-            "🚀 Claude Code を起動",
+            "🚀 AIツールを起動",
             "🔙 メニューに戻る",
         ],
         style=custom_style,
     ).ask()
 
-    if next_action == "🚀 Claude Code を起動":
-        flow_launch_claude(password)
+    if next_action == "🚀 AIツールを起動":
+        flow_launch_ai_tool(password)
 
 
 def run_tui():
@@ -1128,8 +1281,8 @@ def run_tui():
                 flow_folder_project()
             elif choice == "📄 ファイルから開始" or choice == "📁 ファイルを追加":
                 flow_new_project()
-            elif choice == "🚀 Claude Code を起動":
-                flow_launch_claude()
+            elif choice == "🚀 AIツールを起動":
+                flow_launch_ai_tool()
             elif choice == "🔓 結果を復元":
                 flow_restore()
             elif choice == "📋 ステータス確認":
