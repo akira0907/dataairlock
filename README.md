@@ -151,4 +151,4 @@ MIT
 
 ## 作者
 
-放射線診断科医師 / 横浜市立大学病院
+[@akira0907](https://github.com/akira0907)
