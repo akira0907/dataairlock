@@ -29,6 +29,13 @@ flowchart LR
     style D fill:#e0e0ff,stroke:#0000cc
 ```
 
+## 特徴
+
+- **CLIツール** - ターミナルで完結、Claude Code や他のCLIツールとシームレスに連携
+- **ローカル完結** - 匿名化・復元はすべてローカルで実行、クラウドに生データを送らない
+- **セマンティックID** - `PATIENT_001` 等の意味のあるIDでLLMが文脈を理解
+- **復元可能** - 分析結果をワンコマンドで元のデータに復元
+
 ## なぜ DataAirlock？
 
 | 課題 | DataAirlockの解決策 |
@@ -50,7 +57,7 @@ pip install dataairlock
 
 ```bash
 # 1. ワークスペースを作成（ファイルを匿名化）
-dataairlock workspace ./my_project --add data/patients.csv -p パスワード
+dataairlock workspace ./my_project --add data/patients.csv -p mypassword
 
 # 2. Claude Code を起動（匿名化データで作業）
 dataairlock wrap ./my_project --shell
@@ -58,7 +65,20 @@ dataairlock wrap ./my_project --shell
 cd ./my_project/.airlock && claude
 
 # 3. 結果を復元
-dataairlock workspace ./my_project --restore-all -p パスワード
+dataairlock workspace ./my_project --restore-all -p mypassword
+```
+
+### Claude Code と連携
+
+```bash
+# 対話シェルを起動（.airlock/ 内で作業）
+dataairlock wrap ./my_project --shell
+
+# Claude Code を直接起動
+dataairlock wrap ./my_project -c "claude"
+
+# 自動復元付きでスクリプト実行
+dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypassword
 ```
 
 ## 対応する個人情報（PII）
