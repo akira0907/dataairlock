@@ -149,6 +149,55 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `generalize` | Generalize (decade, prefecture, etc.) | Birth date → decade, address → prefecture |
 | `delete` | Delete entire column | Unnecessary PII columns |
 
+## PII Detection Modes
+
+DataAirlock supports three detection modes:
+
+| Mode | Description | Features |
+|------|-------------|----------|
+| `rule` | Rule-based (regex) | Fast, works offline, default |
+| `llm` | LLM (Ollama) only | High accuracy, detects ambiguous PII |
+| `hybrid` | Rule + LLM combined | Best accuracy, recommended |
+
+### CLI Usage
+
+```bash
+# Rule-based (default)
+dataairlock scan data.csv
+
+# LLM mode
+dataairlock scan data.csv -m llm
+
+# Hybrid mode (recommended)
+dataairlock scan data.csv -m hybrid
+
+# Also available for anonymize
+dataairlock anonymize data.csv -m hybrid -p mypassword
+```
+
+### TUI Usage
+
+In TUI, when processing folders, you'll be asked "Use LLM to improve PII detection accuracy?"
+Select "Yes" to choose a detection mode.
+
+### Ollama Setup
+
+LLM mode requires Ollama:
+
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Start server
+ollama serve
+
+# Download model
+ollama pull llama3.1:8b
+```
+
 ## Profile Feature
 
 Save PII processing settings as profiles to reuse in future work.

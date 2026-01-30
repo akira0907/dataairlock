@@ -151,6 +151,55 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `generalize` | 一般化（年代、都道府県等） | 生年月日→年代、住所→都道府県 |
 | `delete` | 列ごと削除 | 不要な個人情報列 |
 
+## PII検出モード
+
+DataAirlockは3つの検出モードをサポートしています。
+
+| モード | 説明 | 特徴 |
+|--------|------|------|
+| `rule` | ルールベース（正規表現） | 高速、オフライン動作、デフォルト |
+| `llm` | LLM（Ollama）のみ | 高精度、曖昧なPIIも検出 |
+| `hybrid` | ルール + LLM の併用 | 最高精度、推奨 |
+
+### CLIでの使用
+
+```bash
+# ルールベース（デフォルト）
+dataairlock scan data.csv
+
+# LLMモード
+dataairlock scan data.csv -m llm
+
+# ハイブリッドモード（推奨）
+dataairlock scan data.csv -m hybrid
+
+# 匿名化時も指定可能
+dataairlock anonymize data.csv -m hybrid -p mypassword
+```
+
+### TUIでの使用
+
+TUIでは、フォルダ処理時に「LLMを使用してPII検出の精度を向上させますか？」と確認が表示されます。
+「はい」を選択すると、検出モードを選択できます。
+
+### Ollamaのセットアップ
+
+LLMモードを使用するにはOllamaが必要です：
+
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# サーバー起動
+ollama serve
+
+# モデルダウンロード
+ollama pull llama3.1:8b
+```
+
 ## プロファイル機能
 
 PII処理設定をプロファイルとして保存し、次回以降の作業で再利用できます。

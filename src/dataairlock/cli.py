@@ -37,6 +37,11 @@ from dataairlock.document_anonymizer import (
     scan_document,
 )
 from dataairlock.profile import ProfileManager
+from dataairlock.hybrid_detector import (
+    HybridPIIDetector,
+    DetectionMode,
+    detect_pii_hybrid,
+)
 
 app = typer.Typer(
     name="dataairlock",
@@ -154,9 +159,19 @@ def get_password_interactive(confirm: bool = True) -> str:
 @app.command()
 def scan(
     input_file: Path = typer.Argument(..., help="入力ファイル（CSV/Excel）"),
+    detection_mode: str = typer.Option(
+        "rule",
+        "-m", "--detection-mode",
+        help="検出モード: rule/llm/hybrid",
+    ),
 ):
     """
     PIIを検出して表示（匿名化は実行しない）
+
+    検出モード:
+    - rule: ルールベース（正規表現）のみ（デフォルト、高速）
+    - llm: LLM（Ollama）のみ（精度重視）
+    - hybrid: ルール + LLM の併用（推奨）
     """
     # ファイル読み込み
     if not input_file.exists():
@@ -169,8 +184,19 @@ def scan(
         console.print(f"[red]エラー: ファイルの読み込みに失敗しました: {e}[/red]")
         raise typer.Exit(1)
 
+    # 検出モードを解釈
+    mode_map = {
+        "rule": DetectionMode.RULE_ONLY,
+        "llm": DetectionMode.LLM_ONLY,
+        "hybrid": DetectionMode.HYBRID,
+    }
+    mode = mode_map.get(detection_mode.lower(), DetectionMode.RULE_ONLY)
+
     # PII検出
-    pii_columns = detect_pii_columns(df)
+    if mode == DetectionMode.RULE_ONLY:
+        pii_columns = detect_pii_columns(df)
+    else:
+        pii_columns = detect_pii_hybrid(df, mode=mode)
 
     # 結果表示
     console.print()
@@ -240,9 +266,19 @@ def anonymize(
         "--auto",
         help="確認なしで自動実行",
     ),
+    detection_mode: str = typer.Option(
+        "rule",
+        "-m", "--detection-mode",
+        help="検出モード: rule/llm/hybrid",
+    ),
 ):
     """
     ファイルを匿名化する
+
+    検出モード:
+    - rule: ルールベース（正規表現）のみ（デフォルト、高速）
+    - llm: LLM（Ollama）のみ（精度重視）
+    - hybrid: ルール + LLM の併用（推奨）
     """
     # ファイル読み込み
     if not input_file.exists():
@@ -257,8 +293,19 @@ def anonymize(
 
     console.print(Panel(f"📁 ファイル: [bold]{input_file.name}[/bold]（{len(df):,}行）"))
 
+    # 検出モードを解釈
+    mode_map = {
+        "rule": DetectionMode.RULE_ONLY,
+        "llm": DetectionMode.LLM_ONLY,
+        "hybrid": DetectionMode.HYBRID,
+    }
+    mode = mode_map.get(detection_mode.lower(), DetectionMode.RULE_ONLY)
+
     # PII検出
-    pii_columns = detect_pii_columns(df)
+    if mode == DetectionMode.RULE_ONLY:
+        pii_columns = detect_pii_columns(df)
+    else:
+        pii_columns = detect_pii_hybrid(df, mode=mode)
 
     if not pii_columns:
         console.print("[green]✓ 個人情報列は検出されませんでした[/green]")
