@@ -499,6 +499,11 @@ def restore_results(project_dir: Path, password: str) -> bool:
         except Exception as e:
             console.print(f"  [red]✗[/red] {rel_path}: {e}")
 
+    # マッピングレポートを生成
+    report_path = results_dir / "_mapping_report.txt"
+    _generate_mapping_report(all_mappings, report_path)
+    console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
+
     console.print()
     console.print(Panel(
         f"[green]✅ {restored_count}ファイルを復元しました[/green]\n\n"
@@ -507,6 +512,53 @@ def restore_results(project_dir: Path, password: str) -> bool:
     ))
 
     return True
+
+
+def _generate_mapping_report(mappings: dict, output_path: Path) -> None:
+    """
+    マッピングレポートを生成
+
+    Args:
+        mappings: マッピング辞書
+        output_path: 出力ファイルパス
+    """
+    lines = [
+        "=" * 60,
+        "DataAirlock マッピングレポート",
+        f"生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "=" * 60,
+        "",
+        "このファイルには匿名化IDと元の値の対応表が含まれています。",
+        "⚠️ 機密情報が含まれるため、取り扱いに注意してください。",
+        "",
+    ]
+
+    # 各列のマッピングを出力
+    for col_name, col_info in mappings.items():
+        if col_name == "metadata":
+            continue
+
+        if not isinstance(col_info, dict):
+            continue
+
+        lines.append("-" * 60)
+        lines.append(f"列: {col_name}")
+
+        # PIIタイプ
+        if "pii_type" in col_info:
+            lines.append(f"タイプ: {col_info['pii_type']}")
+
+        # マッピング一覧
+        if "mapping" in col_info and isinstance(col_info["mapping"], dict):
+            lines.append("")
+            lines.append("マッピング:")
+            for original, anonymized in col_info["mapping"].items():
+                lines.append(f"  {anonymized} → {original}")
+
+        lines.append("")
+
+    # ファイル書き込み
+    output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 # =============================================================================
