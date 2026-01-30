@@ -149,7 +149,8 @@ class TestDocumentAnonymizer:
         # 匿名化されたファイルを読み込んで確認
         doc = Document(output_path)
         full_text = "\n".join([p.text for p in doc.paragraphs])
-        assert "ANON_" in full_text
+        # セマンティックID（PHONE_, EMAIL_, ADDR_など）が含まれていることを確認
+        assert any(prefix in full_text for prefix in ["PHONE_", "EMAIL_", "ADDR_", "BIRTHDATE_"])
         # 元の電話番号がないことを確認
         assert "090-1234-5678" not in full_text
 

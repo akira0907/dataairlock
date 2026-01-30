@@ -41,8 +41,16 @@ from dataairlock.document_anonymizer import (
 app = typer.Typer(
     name="dataairlock",
     help="個人情報を匿名化してクラウドLLMに安全に渡すためのCLIツール",
-    no_args_is_help=True,
+    no_args_is_help=False,
 )
+
+
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """DataAirlock - 機密データを安全にクラウドLLMへ"""
+    if ctx.invoked_subcommand is None:
+        from dataairlock.tui import run_tui
+        run_tui()
 
 console = Console()
 
@@ -2519,6 +2527,17 @@ def wrap(
         console.print(f"[yellow]コマンドは終了コード {exit_code} で終了しました[/yellow]")
 
     raise typer.Exit(exit_code)
+
+
+@app.command()
+def start():
+    """
+    対話型TUIを起動
+
+    すべての操作を対話形式で実行できます。
+    """
+    from dataairlock.tui import run_tui
+    run_tui()
 
 
 if __name__ == "__main__":

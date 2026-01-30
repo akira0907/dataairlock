@@ -3,7 +3,9 @@
 import base64
 import hashlib
 import json
+import random
 import re
+import string
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,6 +15,31 @@ from typing import Any, Literal
 
 import pandas as pd
 from cryptography.fernet import Fernet
+
+
+def generate_session_id(length: int = 3) -> str:
+    """セッションIDを生成（例: K9M, A7X）"""
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(random.choices(chars, k=length))
+
+
+# 匿名化パターン検出用（衝突チェック用）
+ANON_PATTERN = re.compile(
+    r'^(PATIENT|PERSON|PERSON_KANA|PHONE|EMAIL|ADDR|BIRTHDATE|AGE|MYNUMBER|ID)_\d{3}'
+)
+
+
+def check_collision(df: pd.DataFrame) -> list[str]:
+    """元データに匿名化パターンと似た値が存在するかチェック"""
+    warnings = []
+    for col in df.columns:
+        for val in df[col].dropna().unique():
+            str_val = str(val)
+            if ANON_PATTERN.match(str_val):
+                warnings.append(
+                    f"警告: 列'{col}'に匿名化パターンと似た値があります: {str_val}"
+                )
+    return warnings
 
 
 class PIIType(Enum):
@@ -470,12 +497,17 @@ def anonymize_dataframe(
         (匿名化されたDataFrame, マッピング辞書)
     """
     anonymized_df = df.copy()
+
+    # セッションIDを生成（同一ファイル内で共通のID）
+    session_id = generate_session_id()
+
     mapping: dict[str, Any] = {
         "metadata": {
             "created_at": datetime.now().isoformat(),
             "strategy": strategy,
             "original_file": original_file,
             "columns_processed": list(pii_columns.keys()),
+            "session_id": session_id,
         }
     }
 
@@ -489,7 +521,7 @@ def anonymize_dataframe(
 
         elif strategy == "generalize":
             col_mapping = _generalize_column(
-                anonymized_df[col_name], pii_result.pii_type
+                anonymized_df[col_name], pii_result.pii_type, session_id
             )
             anonymized_df[col_name] = anonymized_df[col_name].map(
                 lambda x: col_mapping.get(str(x) if pd.notna(x) else x, x)
@@ -501,7 +533,7 @@ def anonymize_dataframe(
             }
 
         else:  # replace
-            col_mapping = _replace_column(anonymized_df[col_name], pii_result.pii_type)
+            col_mapping = _replace_column(anonymized_df[col_name], pii_result.pii_type, session_id)
             anonymized_df[col_name] = anonymized_df[col_name].map(
                 lambda x: col_mapping.get(str(x) if pd.notna(x) else x, x)
             )
@@ -517,6 +549,7 @@ def anonymize_dataframe(
 def _replace_column(
     series: pd.Series,
     pii_type: PIIType = PIIType.UNKNOWN,
+    session_id: str | None = None,
 ) -> dict[str, str]:
     """列の値をセマンティックIDで置換するマッピングを生成"""
     mapping: dict[str, str] = {}
@@ -527,12 +560,19 @@ def _replace_column(
         str_value = str(value)
         if str_value not in mapping:
             # ゼロパディング（3桁、999超えたら自動拡張）
-            mapping[str_value] = f"{prefix}_{counter:03d}"
+            if session_id:
+                mapping[str_value] = f"{prefix}_{counter:03d}_{session_id}"
+            else:
+                mapping[str_value] = f"{prefix}_{counter:03d}"
             counter += 1
     return mapping
 
 
-def _generalize_column(series: pd.Series, pii_type: PIIType) -> dict[str, str]:
+def _generalize_column(
+    series: pd.Series,
+    pii_type: PIIType,
+    session_id: str | None = None,
+) -> dict[str, str]:
     """列の値を一般化するマッピングを生成"""
     mapping: dict[str, str] = {}
     prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
@@ -551,7 +591,10 @@ def _generalize_column(series: pd.Series, pii_type: PIIType) -> dict[str, str]:
             mapping[str_value] = _generalize_age(str_value)
         else:
             # 一般化ルールがない場合はセマンティックID置換にフォールバック
-            mapping[str_value] = f"{prefix}_{counter:03d}"
+            if session_id:
+                mapping[str_value] = f"{prefix}_{counter:03d}_{session_id}"
+            else:
+                mapping[str_value] = f"{prefix}_{counter:03d}"
             counter += 1
 
     return mapping
@@ -630,6 +673,10 @@ def deanonymize_dataframe(
     """
     匿名化を解除してDataFrameを復元
 
+    値ベースの復元: 列名に関係なく全セルをスキャンして復元する。
+    これにより、LLMがデータを並べ替えたり、新しい列に配置した場合でも
+    正しく復元できる。
+
     Args:
         df: 匿名化されたDataFrame
         mapping: 匿名化時に生成されたマッピング
@@ -639,11 +686,10 @@ def deanonymize_dataframe(
     """
     restored_df = df.copy()
 
+    # 全列の逆マッピングを統合して作成
+    reverse_map: dict[str, str] = {}
     for col_name, col_info in mapping.items():
         if col_name == "metadata":
-            continue
-
-        if col_name not in restored_df.columns:
             continue
 
         if col_info.get("action") == "deleted":
@@ -654,11 +700,31 @@ def deanonymize_dataframe(
         if not values_mapping:
             continue
 
-        # 逆マッピングを作成
-        reverse_mapping = {v: k for k, v in values_mapping.items()}
-        restored_df[col_name] = restored_df[col_name].map(
-            lambda x: reverse_mapping.get(str(x) if pd.notna(x) else x, x)
-        )
+        # 逆マッピングを統合
+        for orig, anon in values_mapping.items():
+            reverse_map[anon] = orig
+
+    def restore_value(x):
+        """セル値を復元（完全一致または部分文字列置換）"""
+        if pd.isna(x):
+            return x
+        str_x = str(x)
+
+        # まず完全一致を試す
+        if str_x in reverse_map:
+            return reverse_map[str_x]
+
+        # 完全一致しない場合、部分文字列として置換を試す
+        result = str_x
+        for anon, orig in reverse_map.items():
+            if anon in result:
+                result = result.replace(anon, orig)
+
+        return result
+
+    # 全列・全セルをスキャンして復元
+    for col in restored_df.columns:
+        restored_df[col] = restored_df[col].apply(restore_value)
 
     return restored_df
 

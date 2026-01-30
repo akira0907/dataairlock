@@ -1,5 +1,6 @@
 """Anonymizer テスト"""
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -13,9 +14,11 @@ from dataairlock.anonymizer import (
     PIIType,
     SEMANTIC_PREFIXES,
     anonymize_dataframe,
+    check_collision,
     deanonymize_dataframe,
     detect_pii_columns,
     detect_pii_values,
+    generate_session_id,
     load_mapping,
     save_mapping,
 )
@@ -526,17 +529,22 @@ class TestSemanticIDs:
             assert pii_type in SEMANTIC_PREFIXES, f"{pii_type} is missing from SEMANTIC_PREFIXES"
 
     def test_semantic_id_format(self):
-        """セマンティックIDのフォーマット（PREFIX_001形式）"""
+        """セマンティックIDのフォーマット（PREFIX_001_SESSION形式）"""
         df = pd.DataFrame({
             "患者ID": ["P001", "P002", "P003"],
         })
         pii_columns = detect_pii_columns(df)
-        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="replace")
+        anon_df, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
 
-        # 連番で生成されている
-        assert anon_df["患者ID"].iloc[0] == "PATIENT_001"
-        assert anon_df["患者ID"].iloc[1] == "PATIENT_002"
-        assert anon_df["患者ID"].iloc[2] == "PATIENT_003"
+        # セッションIDがメタデータに含まれている
+        session_id = mapping["metadata"]["session_id"]
+        assert len(session_id) == 3
+        assert session_id.isupper() or session_id.isalnum()
+
+        # 連番で生成されている（セッションIDが付加される）
+        assert anon_df["患者ID"].iloc[0] == f"PATIENT_001_{session_id}"
+        assert anon_df["患者ID"].iloc[1] == f"PATIENT_002_{session_id}"
+        assert anon_df["患者ID"].iloc[2] == f"PATIENT_003_{session_id}"
 
     def test_semantic_id_same_value_same_id(self):
         """同じ値は同じIDになる"""
@@ -578,11 +586,13 @@ class TestSemanticIDs:
             "氏名": ["山田太郎", "鈴木花子"],
         })
         pii_columns = detect_pii_columns(df)
-        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="replace")
+        anon_df, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
 
-        # 各列の最初の値は001
-        assert anon_df["患者ID"].iloc[0] == "PATIENT_001"
-        assert anon_df["氏名"].iloc[0] == "PERSON_001"
+        session_id = mapping["metadata"]["session_id"]
+
+        # 各列の最初の値は001（同一セッションIDが付加される）
+        assert anon_df["患者ID"].iloc[0] == f"PATIENT_001_{session_id}"
+        assert anon_df["氏名"].iloc[0] == f"PERSON_001_{session_id}"
 
     def test_semantic_id_unknown_type(self):
         """不明なPIIタイプはID_プレフィックスを使用"""
@@ -604,9 +614,11 @@ class TestSemanticIDs:
         pii_columns = detect_pii_columns(df)
         _, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
 
+        session_id = mapping["metadata"]["session_id"]
+
         assert "患者ID" in mapping
-        assert mapping["患者ID"]["values"]["P001"] == "PATIENT_001"
-        assert mapping["患者ID"]["values"]["P002"] == "PATIENT_002"
+        assert mapping["患者ID"]["values"]["P001"] == f"PATIENT_001_{session_id}"
+        assert mapping["患者ID"]["values"]["P002"] == f"PATIENT_002_{session_id}"
 
     def test_semantic_id_deanonymize(self):
         """セマンティックIDから元の値を復元できる"""
@@ -630,11 +642,167 @@ class TestSemanticIDs:
             "住所": ["東京都新宿区", "大阪府大阪市"],  # generalize可
         })
         pii_columns = detect_pii_columns(df)
-        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="generalize")
+        anon_df, mapping = anonymize_dataframe(df, pii_columns, strategy="generalize")
+
+        session_id = mapping["metadata"]["session_id"]
 
         # 患者IDはgeneralize不可なのでセマンティックIDにフォールバック
-        assert anon_df["患者ID"].iloc[0].startswith("PATIENT_")
+        assert anon_df["患者ID"].iloc[0] == f"PATIENT_001_{session_id}"
 
         # 住所は都道府県に一般化
         assert anon_df["住所"].iloc[0] == "東京都"
         assert anon_df["住所"].iloc[1] == "大阪府"
+
+
+class TestSessionID:
+    """セッションIDのテスト"""
+
+    def test_generate_session_id_default_length(self):
+        """デフォルトの長さ（3文字）のセッションID生成"""
+        session_id = generate_session_id()
+        assert len(session_id) == 3
+        assert all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" for c in session_id)
+
+    def test_generate_session_id_custom_length(self):
+        """カスタム長のセッションID生成"""
+        session_id = generate_session_id(5)
+        assert len(session_id) == 5
+
+    def test_generate_session_id_uniqueness(self):
+        """セッションIDの一意性（確率的テスト）"""
+        ids = [generate_session_id() for _ in range(100)]
+        # 100回生成してほとんどがユニークであることを確認
+        assert len(set(ids)) > 90
+
+    def test_session_id_in_metadata(self):
+        """セッションIDがメタデータに含まれる"""
+        df = pd.DataFrame({"患者ID": ["P001", "P002"]})
+        pii_columns = detect_pii_columns(df)
+        _, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
+
+        assert "session_id" in mapping["metadata"]
+        assert len(mapping["metadata"]["session_id"]) == 3
+
+    def test_same_session_id_for_all_columns(self):
+        """同一ファイル内の全列は同じセッションIDを使用"""
+        df = pd.DataFrame({
+            "患者ID": ["P001"],
+            "氏名": ["山田太郎"],
+        })
+        pii_columns = detect_pii_columns(df)
+        anon_df, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
+
+        session_id = mapping["metadata"]["session_id"]
+
+        # 両方の列で同じセッションIDが使われている
+        assert anon_df["患者ID"].iloc[0].endswith(f"_{session_id}")
+        assert anon_df["氏名"].iloc[0].endswith(f"_{session_id}")
+
+
+class TestCollisionCheck:
+    """衝突チェックのテスト"""
+
+    def test_no_collision(self):
+        """衝突がない場合"""
+        df = pd.DataFrame({
+            "患者ID": ["P001", "P002"],
+            "氏名": ["山田太郎", "鈴木花子"],
+        })
+        warnings = check_collision(df)
+        assert len(warnings) == 0
+
+    def test_collision_detected(self):
+        """衝突が検出される場合"""
+        df = pd.DataFrame({
+            "患者ID": ["PATIENT_001", "P002"],  # 匿名化パターンと似た値
+        })
+        warnings = check_collision(df)
+        assert len(warnings) == 1
+        assert "PATIENT_001" in warnings[0]
+
+    def test_multiple_collisions(self):
+        """複数の衝突"""
+        df = pd.DataFrame({
+            "col1": ["PERSON_001", "normal"],
+            "col2": ["PHONE_002", "normal"],
+        })
+        warnings = check_collision(df)
+        assert len(warnings) == 2
+
+    def test_collision_pattern_variations(self):
+        """様々な匿名化パターンの検出"""
+        patterns_to_test = [
+            "PATIENT_001",
+            "PERSON_999",
+            "PHONE_123",
+            "EMAIL_001",
+            "ADDR_456",
+            "ID_001",
+        ]
+        for pattern in patterns_to_test:
+            df = pd.DataFrame({"col": [pattern]})
+            warnings = check_collision(df)
+            assert len(warnings) == 1, f"Pattern {pattern} should be detected"
+
+
+class TestValueBasedRestore:
+    """値ベース復元のテスト"""
+
+    def test_restore_regardless_of_column_name(self):
+        """列名に関係なく復元できる"""
+        # 元データ
+        original_df = pd.DataFrame({
+            "患者ID": ["P001", "P002"],
+            "氏名": ["山田太郎", "鈴木花子"],
+        })
+        pii_columns = detect_pii_columns(original_df)
+        anon_df, mapping = anonymize_dataframe(original_df, pii_columns, strategy="replace")
+
+        # LLMが列名を変更したと仮定
+        renamed_df = anon_df.rename(columns={"患者ID": "ID", "氏名": "名前"})
+
+        # 復元は列名に関係なく動作する
+        restored_df = deanonymize_dataframe(renamed_df, mapping)
+
+        assert restored_df["ID"].iloc[0] == "P001"
+        assert restored_df["名前"].iloc[0] == "山田太郎"
+
+    def test_restore_with_new_column(self):
+        """新しい列に配置されても復元できる"""
+        original_df = pd.DataFrame({"患者ID": ["P001"]})
+        pii_columns = detect_pii_columns(original_df)
+        anon_df, mapping = anonymize_dataframe(original_df, pii_columns, strategy="replace")
+
+        session_id = mapping["metadata"]["session_id"]
+        anon_value = f"PATIENT_001_{session_id}"
+
+        # LLMが新しい列を作成したと仮定
+        new_df = pd.DataFrame({
+            "分析結果": [f"{anon_value}の来院回数は3回"],
+            "備考": ["通常"],
+        })
+
+        # 復元
+        restored_df = deanonymize_dataframe(new_df, mapping)
+
+        assert restored_df["分析結果"].iloc[0] == "P001の来院回数は3回"
+
+    def test_restore_shuffled_rows(self):
+        """行がシャッフルされても復元できる"""
+        original_df = pd.DataFrame({
+            "患者ID": ["P001", "P002", "P003"],
+            "氏名": ["山田太郎", "鈴木花子", "佐藤一郎"],
+        })
+        pii_columns = detect_pii_columns(original_df)
+        anon_df, mapping = anonymize_dataframe(original_df, pii_columns, strategy="replace")
+
+        # 行をシャッフル
+        shuffled_df = anon_df.iloc[[2, 0, 1]].reset_index(drop=True)
+
+        # 復元
+        restored_df = deanonymize_dataframe(shuffled_df, mapping)
+
+        # シャッフルされた順序で正しく復元される
+        assert restored_df["患者ID"].iloc[0] == "P003"
+        assert restored_df["患者ID"].iloc[1] == "P001"
+        assert restored_df["患者ID"].iloc[2] == "P002"

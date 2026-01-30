@@ -23,6 +23,7 @@ from .anonymizer import (
     _generalize_birthdate,
     _generalize_address,
     _generalize_age,
+    generate_session_id,
 )
 
 
@@ -55,6 +56,7 @@ class DocumentAnonymizer:
         self._reverse_mapping: dict[str, str] = {}  # replacement -> original
         self._type_mapping: dict[str, str] = {}  # original -> pii_type
         self._type_counters: dict[PIIType, int] = {}  # PIIType別のカウンター
+        self._session_id: str | None = None  # セッションID
 
     def _generate_replacement(
         self,
@@ -78,13 +80,19 @@ class DocumentAnonymizer:
                 prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
                 counter = self._type_counters.get(pii_type, 0) + 1
                 self._type_counters[pii_type] = counter
-                replacement = f"{prefix}_{counter:03d}"
+                if self._session_id:
+                    replacement = f"{prefix}_{counter:03d}_{self._session_id}"
+                else:
+                    replacement = f"{prefix}_{counter:03d}"
         else:
             # セマンティックIDを使用
             prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
             counter = self._type_counters.get(pii_type, 0) + 1
             self._type_counters[pii_type] = counter
-            replacement = f"{prefix}_{counter:03d}"
+            if self._session_id:
+                replacement = f"{prefix}_{counter:03d}_{self._session_id}"
+            else:
+                replacement = f"{prefix}_{counter:03d}"
 
         self._value_mapping[value] = replacement
         self._reverse_mapping[replacement] = value
@@ -265,6 +273,7 @@ class DocumentAnonymizer:
         self._reverse_mapping = {}
         self._type_mapping = {}
         self._type_counters = {}
+        self._session_id = generate_session_id()
 
         doc = Document(input_path)
         all_matches: list[TextMatch] = []
@@ -313,6 +322,7 @@ class DocumentAnonymizer:
                 "original_file": str(input_path),
                 "file_type": "docx",
                 "total_replacements": len(all_matches),
+                "session_id": self._session_id,
             },
             "values": self._value_mapping.copy(),
             "types": self._type_mapping.copy(),
@@ -487,6 +497,7 @@ class DocumentAnonymizer:
         self._reverse_mapping = {}
         self._type_mapping = {}
         self._type_counters = {}
+        self._session_id = generate_session_id()
 
         prs = Presentation(input_path)
         all_matches: list[TextMatch] = []
@@ -531,6 +542,7 @@ class DocumentAnonymizer:
                 "original_file": str(input_path),
                 "file_type": "pptx",
                 "total_replacements": len(all_matches),
+                "session_id": self._session_id,
             },
             "values": self._value_mapping.copy(),
             "types": self._type_mapping.copy(),
