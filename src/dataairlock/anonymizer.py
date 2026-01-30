@@ -486,6 +486,8 @@ def anonymize_dataframe(
     pii_columns: dict[str, PIIColumnResult],
     strategy: Literal["replace", "generalize", "delete"] = "replace",
     original_file: str | None = None,
+    session_id: str | None = None,
+    global_mapping: dict[str, dict[str, str]] | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """
     DataFrameを匿名化する
@@ -495,14 +497,21 @@ def anonymize_dataframe(
         pii_columns: detect_pii_columns()の結果
         strategy: 匿名化戦略 ('replace', 'generalize', 'delete')
         original_file: 元ファイル名（メタデータ用）
+        session_id: セッションID（指定しない場合は自動生成）
+        global_mapping: 複数ファイル間で共有するマッピング（同じ値に同じIDを割り当てる）
 
     Returns:
         (匿名化されたDataFrame, マッピング辞書)
     """
     anonymized_df = df.copy()
 
-    # セッションIDを生成（同一ファイル内で共通のID）
-    session_id = generate_session_id()
+    # セッションIDを生成または使用
+    if session_id is None:
+        session_id = generate_session_id()
+
+    # グローバルマッピングを初期化
+    if global_mapping is None:
+        global_mapping = {}
 
     mapping: dict[str, Any] = {
         "metadata": {
@@ -524,8 +533,14 @@ def anonymize_dataframe(
 
         elif strategy == "generalize":
             col_mapping = _generalize_column(
-                anonymized_df[col_name], pii_result.pii_type, session_id
+                anonymized_df[col_name], pii_result.pii_type, session_id,
+                global_mapping.get(col_name),
             )
+            # グローバルマッピングを更新
+            if col_name not in global_mapping:
+                global_mapping[col_name] = {}
+            global_mapping[col_name].update(col_mapping)
+
             anonymized_df[col_name] = anonymized_df[col_name].map(
                 lambda x: col_mapping.get(str(x) if pd.notna(x) else x, x)
             )
@@ -536,7 +551,15 @@ def anonymize_dataframe(
             }
 
         else:  # replace
-            col_mapping = _replace_column(anonymized_df[col_name], pii_result.pii_type, session_id)
+            col_mapping = _replace_column(
+                anonymized_df[col_name], pii_result.pii_type, session_id,
+                global_mapping.get(col_name),
+            )
+            # グローバルマッピングを更新
+            if col_name not in global_mapping:
+                global_mapping[col_name] = {}
+            global_mapping[col_name].update(col_mapping)
+
             anonymized_df[col_name] = anonymized_df[col_name].map(
                 lambda x: col_mapping.get(str(x) if pd.notna(x) else x, x)
             )
@@ -553,11 +576,39 @@ def _replace_column(
     series: pd.Series,
     pii_type: PIIType = PIIType.UNKNOWN,
     session_id: str | None = None,
+    existing_mapping: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """列の値をセマンティックIDで置換するマッピングを生成"""
+    """列の値をセマンティックIDで置換するマッピングを生成
+
+    Args:
+        series: 対象列
+        pii_type: PIIタイプ
+        session_id: セッションID
+        existing_mapping: 既存のマッピング（同じ値に同じIDを割り当てる）
+
+    Returns:
+        値→匿名化IDのマッピング
+    """
     mapping: dict[str, str] = {}
     prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
-    counter = 1
+
+    # 既存のマッピングから最大カウンタを取得
+    if existing_mapping:
+        mapping.update(existing_mapping)
+        # 既存IDから最大番号を抽出
+        max_counter = 0
+        for anon_id in existing_mapping.values():
+            # PERSON_001_XXXX 形式からカウンタを抽出
+            parts = anon_id.split("_")
+            if len(parts) >= 2:
+                try:
+                    num = int(parts[1])
+                    max_counter = max(max_counter, num)
+                except ValueError:
+                    pass
+        counter = max_counter + 1
+    else:
+        counter = 1
 
     for value in series.dropna().unique():
         str_value = str(value)
@@ -575,11 +626,37 @@ def _generalize_column(
     series: pd.Series,
     pii_type: PIIType,
     session_id: str | None = None,
+    existing_mapping: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """列の値を一般化するマッピングを生成"""
+    """列の値を一般化するマッピングを生成
+
+    Args:
+        series: 対象列
+        pii_type: PIIタイプ
+        session_id: セッションID
+        existing_mapping: 既存のマッピング（同じ値に同じIDを割り当てる）
+
+    Returns:
+        値→一般化された値のマッピング
+    """
     mapping: dict[str, str] = {}
     prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
-    counter = 1
+
+    # 既存のマッピングから最大カウンタを取得
+    if existing_mapping:
+        mapping.update(existing_mapping)
+        max_counter = 0
+        for anon_id in existing_mapping.values():
+            parts = anon_id.split("_")
+            if len(parts) >= 2:
+                try:
+                    num = int(parts[1])
+                    max_counter = max(max_counter, num)
+                except ValueError:
+                    pass
+        counter = max_counter + 1
+    else:
+        counter = 1
 
     for value in series.dropna().unique():
         str_value = str(value)

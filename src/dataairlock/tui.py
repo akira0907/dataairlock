@@ -21,6 +21,7 @@ from dataairlock.anonymizer import (
     check_collision,
     deanonymize_dataframe,
     detect_pii_columns,
+    generate_session_id,
     load_mapping,
     save_mapping,
 )
@@ -499,11 +500,6 @@ def restore_results(project_dir: Path, password: str) -> bool:
         except Exception as e:
             console.print(f"  [red]✗[/red] {rel_path}: {e}")
 
-    # マッピングレポートを生成
-    report_path = results_dir / "_mapping_report.txt"
-    _generate_mapping_report(all_mappings, report_path)
-    console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
-
     console.print()
     console.print(Panel(
         f"[green]✅ {restored_count}ファイルを復元しました[/green]\n\n"
@@ -610,20 +606,10 @@ def _generate_anonymization_report(
                     "mapping": {},
                 }
 
-            # マッピングを追加
-            if "mapping" in col_info and isinstance(col_info["mapping"], dict):
-                for original, anonymized in col_info["mapping"].items():
-                    seen_mappings[col_name]["mapping"][anonymized] = original
-
-            # ドキュメントのvaluesマッピング
+            # valuesマッピングを追加（CSV/Excelファイル用）
             if "values" in col_info and isinstance(col_info["values"], dict):
                 for original, anonymized in col_info["values"].items():
-                    if "values" not in seen_mappings:
-                        seen_mappings["values"] = {
-                            "pii_type": "ドキュメント内PII",
-                            "mapping": {},
-                        }
-                    seen_mappings["values"]["mapping"][anonymized] = original
+                    seen_mappings[col_name]["mapping"][anonymized] = original
 
     # マッピングを出力
     for col_name, info in seen_mappings.items():
@@ -1371,11 +1357,17 @@ def flow_folder_project():
     airlock_path = _init_workspace(project_dir)
     mappings_path = _get_mappings_path(project_dir)
 
+    # ワークスペース全体で共通のセッションIDとマッピングを使用
+    # これにより同じ値には同じ匿名化IDが割り当てられる
+    workspace_session_id = generate_session_id()
+    global_mapping: dict[str, dict[str, str]] = {}
+
     config = {
         "created_at": datetime.now().isoformat(),
         "source_directory": str(folder_path),
         "files": {},
         "folder_mode": True,
+        "session_id": workspace_session_id,
     }
 
     processed_count = 0
@@ -1406,6 +1398,7 @@ def flow_folder_project():
                     "created_at": datetime.now().isoformat(),
                     "original_file": str(scanned_file.path),
                     "columns_processed": list(file_actions.keys()),
+                    "session_id": workspace_session_id,
                 }
             }
 
@@ -1418,6 +1411,8 @@ def flow_folder_project():
                             anonymized_df,
                             single_col_pii,
                             strategy=action,
+                            session_id=workspace_session_id,
+                            global_mapping=global_mapping,
                         )
                         # ファイル個別マッピングに追加
                         if col_name in col_mapping:
@@ -1707,6 +1702,11 @@ def flow_add_folder():
     if "files" not in config:
         config["files"] = {}
 
+    # 既存のsession_idを使用するか、新規生成
+    workspace_session_id = config.get("session_id") or generate_session_id()
+    config["session_id"] = workspace_session_id
+    global_mapping: dict[str, dict[str, str]] = {}
+
     # CSVファイルの処理
     for scanned_file in csv_files:
         try:
@@ -1731,6 +1731,7 @@ def flow_add_folder():
                     "created_at": datetime.now().isoformat(),
                     "original_file": str(scanned_file.path),
                     "columns_processed": list(file_actions.keys()),
+                    "session_id": workspace_session_id,
                 }
             }
 
@@ -1743,6 +1744,8 @@ def flow_add_folder():
                             anonymized_df,
                             single_col_pii,
                             strategy=action,
+                            session_id=workspace_session_id,
+                            global_mapping=global_mapping,
                         )
                         # ファイル個別マッピングに追加
                         if col_name in col_mapping:
