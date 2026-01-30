@@ -1,6 +1,8 @@
 """Ollama ローカルLLM連携"""
 
-from typing import Optional, Generator
+from __future__ import annotations
+
+from collections.abc import Generator
 
 import ollama
 
@@ -11,7 +13,7 @@ class LLMClient:
     def __init__(self, model: str = "llama3.1:8b"):
         self.model = model
         self.messages: list[dict] = []
-        self.system_prompt: Optional[str] = None
+        self.system_prompt: str | None = None
 
     def set_system_prompt(self, prompt: str) -> None:
         """システムプロンプトを設定"""

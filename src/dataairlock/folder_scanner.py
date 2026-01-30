@@ -1,9 +1,10 @@
 """フォルダスキャン機能"""
 
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 # 対象ファイル拡張子
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".docx", ".pptx"}
@@ -59,7 +60,7 @@ class ScannedFile:
 def scan_folder(
     root: Path,
     recursive: bool = True,
-    extensions: Optional[set] = None,
+    extensions: set | None = None,
 ) -> list[ScannedFile]:
     """
     フォルダをスキャンして対象ファイルを列挙

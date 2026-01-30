@@ -538,7 +538,7 @@ class TestSemanticIDs:
 
         # セッションIDがメタデータに含まれている
         session_id = mapping["metadata"]["session_id"]
-        assert len(session_id) == 3
+        assert len(session_id) == 4
         assert session_id.isupper() or session_id.isalnum()
 
         # 連番で生成されている（セッションIDが付加される）
@@ -658,9 +658,9 @@ class TestSessionID:
     """セッションIDのテスト"""
 
     def test_generate_session_id_default_length(self):
-        """デフォルトの長さ（3文字）のセッションID生成"""
+        """デフォルトの長さ（4文字）のセッションID生成"""
         session_id = generate_session_id()
-        assert len(session_id) == 3
+        assert len(session_id) == 4
         assert all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" for c in session_id)
 
     def test_generate_session_id_custom_length(self):
@@ -681,7 +681,7 @@ class TestSessionID:
         _, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
 
         assert "session_id" in mapping["metadata"]
-        assert len(mapping["metadata"]["session_id"]) == 3
+        assert len(mapping["metadata"]["session_id"]) == 4
 
     def test_same_session_id_for_all_columns(self):
         """同一ファイル内の全列は同じセッションIDを使用"""

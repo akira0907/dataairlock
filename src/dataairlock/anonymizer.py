@@ -14,11 +14,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 
-def generate_session_id(length: int = 3) -> str:
-    """セッションIDを生成（例: K9M, A7X）"""
+def generate_session_id(length: int = 4) -> str:
+    """セッションIDを生成（例: K9M2, A7XB）
+
+    4文字で36^4 = 1,679,616通り（衝突リスク低減）
+    """
     chars = string.ascii_uppercase + string.digits
     return ''.join(random.choices(chars, k=length))
 
@@ -660,7 +663,7 @@ def load_mapping(
 
     try:
         decrypted_data = fernet.decrypt(encrypted_data)
-    except Exception as e:
+    except InvalidToken as e:
         raise ValueError("パスワードが正しくないか、ファイルが破損しています") from e
 
     return json.loads(decrypted_data.decode("utf-8"))

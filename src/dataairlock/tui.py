@@ -1,11 +1,12 @@
 """DataAirlock 完全対話型TUI"""
 
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import questionary
@@ -184,7 +185,7 @@ def show_status(project_dir: Path) -> bool:
     return True
 
 
-def select_file() -> Optional[Path]:
+def select_file() -> Path | None:
     """ファイル選択（パス入力）"""
     file_path = questionary.path(
         "ファイルを選択（パスを入力、またはドラッグ＆ドロップ）:",
@@ -248,7 +249,7 @@ def select_pii_actions(pii_columns: dict) -> dict:
     return actions
 
 
-def get_password(confirm: bool = True) -> Optional[str]:
+def get_password(confirm: bool = True) -> str | None:
     """パスワード入力"""
     password = questionary.password(
         "パスワードを入力:",
@@ -370,7 +371,7 @@ def restore_results(project_dir: Path, password: str) -> bool:
 # メインメニュー
 # =============================================================================
 
-def main_menu() -> Optional[str]:
+def main_menu() -> str | None:
     """メインメニュー"""
     clear_screen()
     show_header()
@@ -531,7 +532,7 @@ def flow_new_project():
         flow_launch_claude(password)
 
 
-def flow_launch_claude(password: Optional[str] = None):
+def flow_launch_claude(password: str | None = None):
     """Claude Code起動フロー"""
     project_dir = Path.cwd()
     airlock_path = _get_airlock_path(project_dir)
@@ -770,7 +771,7 @@ data/ 内のCSVファイルを読み込んで、基本統計を出力してく�
     prompt_path.write_text(prompt_content, encoding="utf-8")
 
 
-def select_folder() -> Optional[Path]:
+def select_folder() -> Path | None:
     """フォルダ選択（カレントディレクトリがデフォルト）"""
     current_dir = str(Path.cwd())
 
