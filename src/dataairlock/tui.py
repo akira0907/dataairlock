@@ -514,17 +514,18 @@ def restore_results(project_dir: Path, password: str) -> bool:
     return True
 
 
-def _generate_mapping_report(mappings: dict, output_path: Path) -> None:
+def _generate_mapping_report(mappings: dict, output_path: Path, title: str = "DataAirlock マッピングレポート") -> None:
     """
     マッピングレポートを生成
 
     Args:
         mappings: マッピング辞書
         output_path: 出力ファイルパス
+        title: レポートのタイトル
     """
     lines = [
         "=" * 60,
-        "DataAirlock マッピングレポート",
+        title,
         f"生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "=" * 60,
         "",
@@ -559,6 +560,95 @@ def _generate_mapping_report(mappings: dict, output_path: Path) -> None:
 
     # ファイル書き込み
     output_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _generate_anonymization_report(
+    project_dir: Path,
+    all_file_mappings: list[dict],
+    password: str,
+) -> Path:
+    """
+    匿名化時にマッピングレポートを生成（プロジェクトルートに配置）
+
+    Args:
+        project_dir: プロジェクトディレクトリ
+        all_file_mappings: 各ファイルのマッピングリスト
+        password: パスワード（マッピングファイル読み込み用）
+
+    Returns:
+        生成したレポートのパス
+    """
+    lines = [
+        "=" * 70,
+        "DataAirlock 匿名化マッピングレポート",
+        f"生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "=" * 70,
+        "",
+        "このファイルには匿名化IDと元の値の対応表が含まれています。",
+        "AIツールに指示を出すとき、匿名化IDを使って具体的な指示ができます。",
+        "",
+        "例: 「PERSON_001 の来院回数を集計してください」",
+        "",
+        "⚠️ このファイルは機密情報を含むため、.gitignore に追加することを推奨します。",
+        "",
+    ]
+
+    # 各ファイルのマッピングを統合して出力
+    seen_mappings: dict[str, dict] = {}  # col_name -> {anonymized -> original}
+
+    for file_mapping in all_file_mappings:
+        for col_name, col_info in file_mapping.items():
+            if col_name == "metadata":
+                continue
+
+            if not isinstance(col_info, dict):
+                continue
+
+            if col_name not in seen_mappings:
+                seen_mappings[col_name] = {
+                    "pii_type": col_info.get("pii_type", "不明"),
+                    "mapping": {},
+                }
+
+            # マッピングを追加
+            if "mapping" in col_info and isinstance(col_info["mapping"], dict):
+                for original, anonymized in col_info["mapping"].items():
+                    seen_mappings[col_name]["mapping"][anonymized] = original
+
+            # ドキュメントのvaluesマッピング
+            if "values" in col_info and isinstance(col_info["values"], dict):
+                for original, anonymized in col_info["values"].items():
+                    if "values" not in seen_mappings:
+                        seen_mappings["values"] = {
+                            "pii_type": "ドキュメント内PII",
+                            "mapping": {},
+                        }
+                    seen_mappings["values"]["mapping"][anonymized] = original
+
+    # マッピングを出力
+    for col_name, info in seen_mappings.items():
+        if not info.get("mapping"):
+            continue
+
+        lines.append("-" * 70)
+        lines.append(f"【{col_name}】 ({info.get('pii_type', '不明')})")
+        lines.append("")
+
+        for anonymized, original in sorted(info["mapping"].items()):
+            lines.append(f"  {anonymized:30} → {original}")
+
+        lines.append("")
+
+    # ファイルがない場合
+    if not seen_mappings:
+        lines.append("(匿名化されたデータはありません)")
+        lines.append("")
+
+    # ファイル書き込み（プロジェクトルートに配置）
+    report_path = project_dir / "_MAPPING_REPORT.txt"
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+    return report_path
 
 
 # =============================================================================
@@ -706,6 +796,10 @@ def flow_new_project():
         "pii_columns": list(columns_to_process.keys()),
     }
     _save_workspace_config(project_dir, config)
+
+    # マッピングレポート生成（プロジェクトルートに配置）
+    report_path = _generate_anonymization_report(project_dir, [full_mapping], password)
+    console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
 
     console.print()
     console.print(Panel(
@@ -1286,6 +1380,7 @@ def flow_folder_project():
 
     processed_count = 0
     error_count = 0
+    all_file_mappings: list[dict] = []  # マッピングレポート用
 
     # CSVファイルの処理
     for scanned_file in csv_files:
@@ -1340,6 +1435,9 @@ def flow_folder_project():
             mapping_output = mappings_path / mapping_name
             save_mapping(file_mapping, mapping_output, password)
 
+            # レポート用にマッピングを収集
+            all_file_mappings.append(file_mapping)
+
             config["files"][str(scanned_file.relative_path)] = {
                 "original": str(scanned_file.path),
                 "anonymized": str(output_path.relative_to(airlock_path)),
@@ -1386,6 +1484,9 @@ def flow_folder_project():
                 mapping_output = mappings_path / mapping_name
                 save_mapping(doc_file_mapping, mapping_output, password)
 
+                # レポート用にマッピングを収集
+                all_file_mappings.append(doc_file_mapping)
+
                 config["files"][str(scanned_file.relative_path)] = {
                     "original": str(scanned_file.path),
                     "anonymized": str(output_path.relative_to(airlock_path)),
@@ -1403,6 +1504,11 @@ def flow_folder_project():
 
     # ドキュメント生成
     generate_airlock_docs(airlock_path, files)
+
+    # マッピングレポート生成（プロジェクトルートに配置）
+    if all_file_mappings:
+        report_path = _generate_anonymization_report(project_dir, all_file_mappings, password)
+        console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
 
     # 設定保存
     _save_workspace_config(project_dir, config)
@@ -1594,6 +1700,7 @@ def flow_add_folder():
 
     processed_count = 0
     error_count = 0
+    all_file_mappings: list[dict] = []  # マッピングレポート用
 
     # 既存の設定を読み込み
     config = _load_workspace_config(project_dir) or {}
@@ -1653,6 +1760,9 @@ def flow_add_folder():
             mapping_output = mappings_path / mapping_name
             save_mapping(file_mapping, mapping_output, password)
 
+            # レポート用にマッピングを収集
+            all_file_mappings.append(file_mapping)
+
             config["files"][str(scanned_file.relative_path)] = {
                 "original": str(scanned_file.path),
                 "anonymized": str(output_path.relative_to(airlock_path)),
@@ -1699,6 +1809,9 @@ def flow_add_folder():
                 mapping_output = mappings_path / mapping_name
                 save_mapping(doc_file_mapping, mapping_output, password)
 
+                # レポート用にマッピングを収集
+                all_file_mappings.append(doc_file_mapping)
+
                 config["files"][str(scanned_file.relative_path)] = {
                     "original": str(scanned_file.path),
                     "anonymized": str(output_path.relative_to(airlock_path)),
@@ -1716,6 +1829,11 @@ def flow_add_folder():
 
     # ドキュメント更新
     generate_airlock_docs(airlock_path, files)
+
+    # マッピングレポート生成（プロジェクトルートに配置）
+    if all_file_mappings:
+        report_path = _generate_anonymization_report(project_dir, all_file_mappings, password)
+        console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
 
     # 設定保存
     _save_workspace_config(project_dir, config)
