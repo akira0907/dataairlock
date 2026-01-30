@@ -198,6 +198,18 @@ ollama serve
 ollama pull llama3.1:8b
 ```
 
+### Benchmark Results
+
+Detection accuracy on built-in test data (11 columns: 5 clear PII + 2 ambiguous PII + 4 non-PII):
+
+| Mode | Precision | Recall | F1 Score | Time |
+|------|-----------|--------|----------|------|
+| `rule` | 1.000 | 0.714 | 0.833 | 0.002s |
+| `llm` | 1.000 | 0.429 | 0.600 | 15.6s |
+| `hybrid` | 1.000 | **0.857** | **0.923** | 10.1s |
+
+**Hybrid mode improves F1 score by +10.8% compared to rule-only**, successfully detecting ambiguous PII like the "担当者" (person in charge) column containing names like "営業部 山本".
+
 ## Profile Feature
 
 Save PII processing settings as profiles to reuse in future work.
