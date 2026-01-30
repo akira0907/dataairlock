@@ -29,6 +29,21 @@ class PIIType(Enum):
     UNKNOWN = "不明"
 
 
+# PIIType別のセマンティックプレフィックス
+SEMANTIC_PREFIXES: dict[PIIType, str] = {
+    PIIType.PATIENT_ID: "PATIENT",
+    PIIType.NAME: "PERSON",
+    PIIType.NAME_KANA: "PERSON_KANA",
+    PIIType.PHONE: "PHONE",
+    PIIType.EMAIL: "EMAIL",
+    PIIType.ADDRESS: "ADDR",
+    PIIType.BIRTHDATE: "BIRTHDATE",
+    PIIType.AGE: "AGE",
+    PIIType.MY_NUMBER: "MYNUMBER",
+    PIIType.UNKNOWN: "ID",
+}
+
+
 class Confidence(Enum):
     """検出確度"""
     HIGH = "high"
@@ -486,7 +501,7 @@ def anonymize_dataframe(
             }
 
         else:  # replace
-            col_mapping = _replace_column(anonymized_df[col_name])
+            col_mapping = _replace_column(anonymized_df[col_name], pii_result.pii_type)
             anonymized_df[col_name] = anonymized_df[col_name].map(
                 lambda x: col_mapping.get(str(x) if pd.notna(x) else x, x)
             )
@@ -499,19 +514,29 @@ def anonymize_dataframe(
     return anonymized_df, mapping
 
 
-def _replace_column(series: pd.Series) -> dict[str, str]:
-    """列の値をUUIDで置換するマッピングを生成"""
+def _replace_column(
+    series: pd.Series,
+    pii_type: PIIType = PIIType.UNKNOWN,
+) -> dict[str, str]:
+    """列の値をセマンティックIDで置換するマッピングを生成"""
     mapping: dict[str, str] = {}
+    prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
+    counter = 1
+
     for value in series.dropna().unique():
         str_value = str(value)
         if str_value not in mapping:
-            mapping[str_value] = f"ANON_{uuid.uuid4().hex[:8].upper()}"
+            # ゼロパディング（3桁、999超えたら自動拡張）
+            mapping[str_value] = f"{prefix}_{counter:03d}"
+            counter += 1
     return mapping
 
 
 def _generalize_column(series: pd.Series, pii_type: PIIType) -> dict[str, str]:
     """列の値を一般化するマッピングを生成"""
     mapping: dict[str, str] = {}
+    prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
+    counter = 1
 
     for value in series.dropna().unique():
         str_value = str(value)
@@ -525,8 +550,9 @@ def _generalize_column(series: pd.Series, pii_type: PIIType) -> dict[str, str]:
         elif pii_type == PIIType.AGE:
             mapping[str_value] = _generalize_age(str_value)
         else:
-            # 一般化ルールがない場合はUUID置換にフォールバック
-            mapping[str_value] = f"ANON_{uuid.uuid4().hex[:8].upper()}"
+            # 一般化ルールがない場合はセマンティックID置換にフォールバック
+            mapping[str_value] = f"{prefix}_{counter:03d}"
+            counter += 1
 
     return mapping
 

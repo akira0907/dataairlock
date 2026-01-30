@@ -11,6 +11,7 @@ from dataairlock.anonymizer import (
     Confidence,
     PIIDetector,
     PIIType,
+    SEMANTIC_PREFIXES,
     anonymize_dataframe,
     deanonymize_dataframe,
     detect_pii_columns,
@@ -267,7 +268,8 @@ class TestAnonymizeDataframe:
 
         # 元の値が置換されている
         assert anon_df["患者ID"].iloc[0] != "P001"
-        assert anon_df["患者ID"].iloc[0].startswith("ANON_")
+        # セマンティックIDが使用されている (PATIENT_XXX)
+        assert anon_df["患者ID"].iloc[0].startswith("PATIENT_")
 
         # 診断コードは変更されていない
         assert anon_df["診断コード"].iloc[0] == "A001"
@@ -464,9 +466,9 @@ class TestAnonymizer:
 
         anon_df, mapping = anonymizer.anonymize(df)
 
-        # PII列が匿名化されている
-        assert anon_df["患者ID"].iloc[0].startswith("ANON_")
-        assert anon_df["氏名"].iloc[0].startswith("ANON_")
+        # PII列がセマンティックIDで匿名化されている
+        assert anon_df["患者ID"].iloc[0].startswith("PATIENT_")
+        assert anon_df["氏名"].iloc[0].startswith("PERSON_")
 
         # 非PII列は変更されていない
         assert anon_df["診断コード"].iloc[0] == "A001"
@@ -482,9 +484,9 @@ class TestAnonymizer:
 
         anon_df, mapping = anonymizer.anonymize(df, columns=["custom_id", "secret_data"])
 
-        # 指定列が匿名化されている
-        assert anon_df["custom_id"].iloc[0].startswith("ANON_")
-        assert anon_df["secret_data"].iloc[0].startswith("ANON_")
+        # 指定列がセマンティックIDで匿名化されている (不明な型はID_XXX)
+        assert anon_df["custom_id"].iloc[0].startswith("ID_")
+        assert anon_df["secret_data"].iloc[0].startswith("ID_")
 
         # 非指定列は変更されていない
         assert anon_df["public_data"].iloc[0] == "公開1"
@@ -513,3 +515,126 @@ class TestAnonymizer:
 
         assert restored_df["患者ID"].iloc[0] == "P001"
         assert restored_df["氏名"].iloc[0] == "山田太郎"
+
+
+class TestSemanticIDs:
+    """セマンティックIDのテスト"""
+
+    def test_semantic_prefixes_defined(self):
+        """SEMANTIC_PREFIXESが全PIITypeに対して定義されている"""
+        for pii_type in PIIType:
+            assert pii_type in SEMANTIC_PREFIXES, f"{pii_type} is missing from SEMANTIC_PREFIXES"
+
+    def test_semantic_id_format(self):
+        """セマンティックIDのフォーマット（PREFIX_001形式）"""
+        df = pd.DataFrame({
+            "患者ID": ["P001", "P002", "P003"],
+        })
+        pii_columns = detect_pii_columns(df)
+        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="replace")
+
+        # 連番で生成されている
+        assert anon_df["患者ID"].iloc[0] == "PATIENT_001"
+        assert anon_df["患者ID"].iloc[1] == "PATIENT_002"
+        assert anon_df["患者ID"].iloc[2] == "PATIENT_003"
+
+    def test_semantic_id_same_value_same_id(self):
+        """同じ値は同じIDになる"""
+        df = pd.DataFrame({
+            "患者ID": ["P001", "P002", "P001", "P003", "P001"],
+        })
+        pii_columns = detect_pii_columns(df)
+        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="replace")
+
+        # P001は全て同じID
+        assert anon_df["患者ID"].iloc[0] == anon_df["患者ID"].iloc[2]
+        assert anon_df["患者ID"].iloc[0] == anon_df["患者ID"].iloc[4]
+
+        # P002, P003は異なるID
+        assert anon_df["患者ID"].iloc[1] != anon_df["患者ID"].iloc[0]
+        assert anon_df["患者ID"].iloc[3] != anon_df["患者ID"].iloc[0]
+
+    def test_semantic_id_different_types(self):
+        """異なるPIIタイプは異なるプレフィックスを使用"""
+        df = pd.DataFrame({
+            "患者ID": ["P001"],
+            "氏名": ["山田太郎"],
+            "電話番号": ["03-1234-5678"],
+            "メールアドレス": ["test@example.com"],
+        })
+        pii_columns = detect_pii_columns(df)
+        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="replace")
+
+        # 各列は対応するプレフィックスを使用
+        assert anon_df["患者ID"].iloc[0].startswith("PATIENT_")
+        assert anon_df["氏名"].iloc[0].startswith("PERSON_")
+        assert anon_df["電話番号"].iloc[0].startswith("PHONE_")
+        assert anon_df["メールアドレス"].iloc[0].startswith("EMAIL_")
+
+    def test_semantic_id_sequential_numbering(self):
+        """異なる列は独立したカウンターを使用"""
+        df = pd.DataFrame({
+            "患者ID": ["P001", "P002"],
+            "氏名": ["山田太郎", "鈴木花子"],
+        })
+        pii_columns = detect_pii_columns(df)
+        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="replace")
+
+        # 各列の最初の値は001
+        assert anon_df["患者ID"].iloc[0] == "PATIENT_001"
+        assert anon_df["氏名"].iloc[0] == "PERSON_001"
+
+    def test_semantic_id_unknown_type(self):
+        """不明なPIIタイプはID_プレフィックスを使用"""
+        anonymizer = Anonymizer()
+        df = pd.DataFrame({
+            "custom_field": ["value1", "value2"],
+        })
+        # 手動で列を指定（不明な型として扱われる）
+        anon_df, _ = anonymizer.anonymize(df, columns=["custom_field"])
+
+        assert anon_df["custom_field"].iloc[0].startswith("ID_")
+        assert anon_df["custom_field"].iloc[1].startswith("ID_")
+
+    def test_semantic_id_in_mapping(self):
+        """マッピングにセマンティックIDが保存される"""
+        df = pd.DataFrame({
+            "患者ID": ["P001", "P002"],
+        })
+        pii_columns = detect_pii_columns(df)
+        _, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
+
+        assert "患者ID" in mapping
+        assert mapping["患者ID"]["values"]["P001"] == "PATIENT_001"
+        assert mapping["患者ID"]["values"]["P002"] == "PATIENT_002"
+
+    def test_semantic_id_deanonymize(self):
+        """セマンティックIDから元の値を復元できる"""
+        df = pd.DataFrame({
+            "患者ID": ["P001", "P002"],
+            "氏名": ["山田太郎", "鈴木花子"],
+        })
+        pii_columns = detect_pii_columns(df)
+        anon_df, mapping = anonymize_dataframe(df, pii_columns, strategy="replace")
+        restored_df = deanonymize_dataframe(anon_df, mapping)
+
+        assert restored_df["患者ID"].iloc[0] == "P001"
+        assert restored_df["患者ID"].iloc[1] == "P002"
+        assert restored_df["氏名"].iloc[0] == "山田太郎"
+        assert restored_df["氏名"].iloc[1] == "鈴木花子"
+
+    def test_semantic_id_generalize_fallback(self):
+        """generalize戦略のフォールバックもセマンティックIDを使用"""
+        df = pd.DataFrame({
+            "患者ID": ["P001", "P002"],  # generalize不可 -> セマンティックIDにフォールバック
+            "住所": ["東京都新宿区", "大阪府大阪市"],  # generalize可
+        })
+        pii_columns = detect_pii_columns(df)
+        anon_df, _ = anonymize_dataframe(df, pii_columns, strategy="generalize")
+
+        # 患者IDはgeneralize不可なのでセマンティックIDにフォールバック
+        assert anon_df["患者ID"].iloc[0].startswith("PATIENT_")
+
+        # 住所は都道府県に一般化
+        assert anon_df["住所"].iloc[0] == "東京都"
+        assert anon_df["住所"].iloc[1] == "大阪府"

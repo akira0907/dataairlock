@@ -126,8 +126,8 @@ class TestAnonymizeCommand:
         assert "P001" not in anon_df["患者ID"].values
         assert "山田太郎" not in anon_df["氏名"].values
 
-        # ANON_で始まる値があることを確認
-        assert any(str(v).startswith("ANON_") for v in anon_df["患者ID"].values)
+        # セマンティックIDで始まる値があることを確認
+        assert any(str(v).startswith("PATIENT_") for v in anon_df["患者ID"].values)
 
     def test_anonymize_generalize_strategy(self, sample_csv, tmp_path):
         """generalize戦略"""
@@ -595,8 +595,8 @@ class TestWorkspaceCommand:
         assert "P001" not in anon_df["患者ID"].values
         assert "山田太郎" not in anon_df["氏名"].values
 
-        # ANON_で始まる値があることを確認
-        assert any(str(v).startswith("ANON_") for v in anon_df["患者ID"].values)
+        # セマンティックIDで始まる値があることを確認
+        assert any(str(v).startswith("PATIENT_") for v in anon_df["患者ID"].values)
 
     def test_workspace_add_all(self, tmp_path):
         """--add-all: フォルダ内の全ファイルを一括追加"""
@@ -644,7 +644,7 @@ class TestWorkspaceCommand:
         # 匿名化されていることを確認
         anon_df1 = pd.read_csv(airlock_path / "data" / "file1.csv")
         assert "P001" not in anon_df1["患者ID"].values
-        assert any(str(v).startswith("ANON_") for v in anon_df1["患者ID"].values)
+        assert any(str(v).startswith("PATIENT_") for v in anon_df1["患者ID"].values)
 
     def test_workspace_add_all_no_files(self, tmp_path):
         """--add-all: フォルダにCSVがない場合"""

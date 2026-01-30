@@ -1,6 +1,5 @@
 """Word/PowerPointドキュメント匿名化モジュール"""
 
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +16,7 @@ from .anonymizer import (
     PIIDetector,
     PIIType,
     PIIValueResult,
+    SEMANTIC_PREFIXES,
     save_mapping,
     load_mapping,
     _derive_key_from_password,
@@ -54,6 +54,7 @@ class DocumentAnonymizer:
         self._value_mapping: dict[str, str] = {}  # original -> replacement
         self._reverse_mapping: dict[str, str] = {}  # replacement -> original
         self._type_mapping: dict[str, str] = {}  # original -> pii_type
+        self._type_counters: dict[PIIType, int] = {}  # PIIType別のカウンター
 
     def _generate_replacement(
         self,
@@ -73,9 +74,17 @@ class DocumentAnonymizer:
             elif pii_type == PIIType.AGE:
                 replacement = _generalize_age(value)
             else:
-                replacement = f"ANON_{uuid.uuid4().hex[:8].upper()}"
+                # generalizeでも対応できない場合はセマンティックIDにフォールバック
+                prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
+                counter = self._type_counters.get(pii_type, 0) + 1
+                self._type_counters[pii_type] = counter
+                replacement = f"{prefix}_{counter:03d}"
         else:
-            replacement = f"ANON_{uuid.uuid4().hex[:8].upper()}"
+            # セマンティックIDを使用
+            prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
+            counter = self._type_counters.get(pii_type, 0) + 1
+            self._type_counters[pii_type] = counter
+            replacement = f"{prefix}_{counter:03d}"
 
         self._value_mapping[value] = replacement
         self._reverse_mapping[replacement] = value
@@ -255,6 +264,7 @@ class DocumentAnonymizer:
         self._value_mapping = {}
         self._reverse_mapping = {}
         self._type_mapping = {}
+        self._type_counters = {}
 
         doc = Document(input_path)
         all_matches: list[TextMatch] = []
@@ -476,6 +486,7 @@ class DocumentAnonymizer:
         self._value_mapping = {}
         self._reverse_mapping = {}
         self._type_mapping = {}
+        self._type_counters = {}
 
         prs = Presentation(input_path)
         all_matches: list[TextMatch] = []
