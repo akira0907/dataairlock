@@ -1,57 +1,154 @@
 # DataAirlock
 
-個人情報を含むデータを匿名化し、クラウドLLMに安全に渡せる状態に変換するツール。
+**機密データを安全にクラウドLLMへ渡すためのローカルツール**
 
-## 概要
+個人情報を含むデータを匿名化し、Claude Code や Codex などのクラウドLLMで安全に分析。結果を元のデータに復元できます。
 
-DataAirlockは、ローカルLLM（Ollama）と対話しながら、機密データを安全に匿名化します。
+## 概念図
 
-- ローカルLLMによる個人情報（PII）の自動検出
-- 可逆的な匿名化（トークン化）
-- マッピング情報の安全な保存
-- Streamlit WebUIによる直感的な操作
+```mermaid
+flowchart LR
+    subgraph Local["ローカル環境（あなたのPC）"]
+        A[("機密データ<br/>山田太郎, 090-1234-5678")] --> B["DataAirlock<br/>匿名化"]
+        B --> C[("匿名化データ<br/>PERSON_001, PHONE_001")]
+        F["DataAirlock<br/>復元"] --> G[("復元済み結果<br/>山田太郎, 090-1234-5678")]
+    end
 
-## セットアップ
+    subgraph Cloud["クラウド LLM"]
+        D["Claude Code<br/>Codex, GPT..."]
+    end
+
+    C -.->|"安全に送信"| D
+    D -.->|"分析結果"| E[("結果<br/>PERSON_001の来院回数...")]
+    E --> F
+
+    style A fill:#ffe0e0,stroke:#cc0000
+    style G fill:#e0ffe0,stroke:#00cc00
+    style C fill:#fff3cd,stroke:#cc9900
+    style E fill:#fff3cd,stroke:#cc9900
+    style D fill:#e0e0ff,stroke:#0000cc
+```
+
+## なぜ DataAirlock？
+
+| 課題 | DataAirlockの解決策 |
+|------|---------------------|
+| 機密データをクラウドに送れない | ローカルで匿名化してから送信 |
+| 匿名化IDが意味不明 | セマンティックID（PATIENT_001等）でLLMが文脈を理解 |
+| 結果を手動で復元するのが面倒 | ワンコマンドで自動復元 |
+| Word/PPTは匿名化できない | CSV, Excel, Word, PowerPoint に対応 |
+
+## クイックスタート
+
+### インストール
 
 ```bash
-# 仮想環境の有効化
-source .venv/bin/activate
-
-# 依存関係のインストール
-pip install -r requirements.txt
-
-# 開発用インストール
-pip install -e ".[dev]"
+pip install dataairlock
 ```
 
-## 使い方
+### 基本的な使い方
 
 ```bash
-# Streamlit アプリを起動
-streamlit run src/dataairlock/app.py
+# 1. ワークスペースを作成（ファイルを匿名化）
+dataairlock workspace ./my_project --add data/patients.csv -p パスワード
+
+# 2. Claude Code を起動（匿名化データで作業）
+dataairlock wrap ./my_project --shell
+# または
+cd ./my_project/.airlock && claude
+
+# 3. 結果を復元
+dataairlock workspace ./my_project --restore-all -p パスワード
 ```
 
-## プロジェクト構成
+## 対応する個人情報（PII）
+
+| PIIタイプ | 匿名化後の形式 | 例 |
+|-----------|---------------|-----|
+| 患者ID / カルテ番号 | PATIENT_001 | P001 → PATIENT_001 |
+| 氏名（漢字） | PERSON_001 | 山田太郎 → PERSON_001 |
+| 氏名（カナ） | PERSON_KANA_001 | ヤマダタロウ → PERSON_KANA_001 |
+| 電話番号 | PHONE_001 | 090-1234-5678 → PHONE_001 |
+| メールアドレス | EMAIL_001 | test@example.com → EMAIL_001 |
+| 住所 | ADDR_001 | 東京都新宿区... → ADDR_001 |
+| 生年月日 | 1990年代（一般化）または BIRTHDATE_001 | 1990/01/15 → 1990年代 |
+| 年齢 | 30代（一般化）または AGE_001 | 34歳 → 30代 |
+| マイナンバー | MYNUMBER_001 | 123456789012 → MYNUMBER_001 |
+
+## コマンド一覧
+
+| コマンド | 説明 |
+|----------|------|
+| `workspace --add` | ファイルを匿名化してワークスペースに追加 |
+| `workspace --add-all` | フォルダ内の全ファイルを一括追加 |
+| `workspace --status` | ワークスペースの状態を表示 |
+| `workspace --restore` | 結果ファイルを復元 |
+| `workspace --restore-all` | output/内の全CSVを一括復元 |
+| `wrap` | 匿名化環境内でコマンドを実行 |
+| `chat` | ローカルLLM（Ollama）で対話 |
+| `scan` | PII検出のみ（匿名化しない） |
+| `anonymize` | 単発ファイルの匿名化 |
+| `restore` | 単発ファイルの復元 |
+| `scan-doc` | Word/PPTのPII検出 |
+| `anonymize-doc` | Word/PPTの匿名化 |
+| `restore-doc` | Word/PPTの復元 |
+
+## 匿名化戦略
+
+| 戦略 | 説明 | 使用例 |
+|------|------|--------|
+| `replace` | セマンティックIDに置換（復元可能） | 氏名、患者ID、電話番号 |
+| `generalize` | 一般化（年代、都道府県等） | 生年月日→年代、住所→都道府県 |
+| `delete` | 列ごと削除 | 不要な個人情報列 |
+
+## ディレクトリ構成
 
 ```
-dataairlock/
-├── src/dataairlock/
-│   ├── app.py          # Streamlit WebUI
-│   ├── anonymizer.py   # 匿名化ロジック
-│   └── llm_client.py   # Ollama連携
-├── tests/              # テスト
-├── data/
-│   ├── input/          # 入力データ
-│   ├── output/         # 匿名化済みデータ
-│   └── mappings/       # マッピング情報
-└── requirements.txt
+my_project/
+├── .airlock/                    # ワークスペース（Git管理OK）
+│   ├── data/                    # 匿名化済みデータ
+│   │   └── patients.csv         # PATIENT_001, PERSON_001...
+│   ├── output/                  # LLMの出力先
+│   ├── PROMPT.md                # LLM用プロンプトテンプレート
+│   └── README.md
+├── .airlock_mappings/           # マッピングファイル（Git管理NG）
+│   └── patients.mapping.enc     # 暗号化されたマッピング
+└── results/                     # 復元済み結果
+    └── analysis.csv             # 山田太郎, 090-1234-5678...
 ```
+
+## セキュリティ
+
+- **マッピングファイルは暗号化**: Fernet（AES-128-CBC）で暗号化
+- **パスワード必須**: 復元にはパスワードが必要
+- **ローカル処理**: 匿名化・復元はすべてローカルで実行
+- **Git除外推奨**: `.airlock_mappings/` は `.gitignore` に自動追加
 
 ## 必要条件
 
 - Python 3.10+
-- Ollama（ローカルLLM実行用）
+- Ollama（chatコマンドを使う場合のみ）
+
+## 開発
+
+```bash
+# クローン
+git clone https://github.com/akira0907/dataairlock.git
+cd dataairlock
+
+# 開発環境セットアップ
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+# テスト実行
+pytest
+```
 
 ## ライセンス
 
 MIT
+
+## 作者
+
+放射線診断科医師 / 横浜市立大学病院
