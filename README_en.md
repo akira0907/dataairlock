@@ -134,6 +134,12 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `scan-doc` | Detect PII in Word/PPT |
 | `anonymize-doc` | Anonymize Word/PPT |
 | `restore-doc` | Restore Word/PPT |
+| `profile list` | List saved profiles |
+| `profile show` | Show profile details |
+| `profile delete` | Delete a profile |
+| `profile export` | Export profile to JSON |
+| `profile import` | Import profile from JSON |
+| `profile create-default` | Create default profile |
 
 ## Anonymization Strategies
 
@@ -142,6 +148,48 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `replace` | Replace with semantic ID (restorable) | Names, patient IDs, phone numbers |
 | `generalize` | Generalize (decade, prefecture, etc.) | Birth date → decade, address → prefecture |
 | `delete` | Delete entire column | Unnecessary PII columns |
+
+## Profile Feature
+
+Save PII processing settings as profiles to reuse in future work.
+This eliminates repetitive configuration for routine tasks (e.g., monthly patient data processing).
+
+### TUI Usage
+
+When PII is detected in TUI, you can choose to use a profile:
+
+```
+Use a profile?
+  > 📋 Use existing profile
+    ✨ New settings (can save as profile)
+    ⏭️ One-time settings (don't save)
+```
+
+### CLI Usage
+
+```bash
+# List saved profiles
+dataairlock profile list
+
+# Create default profile
+dataairlock profile create-default
+
+# Show profile details
+dataairlock profile show medical_data
+
+# Share with team (export/import)
+dataairlock profile export medical_data -o ./medical_profile.json
+dataairlock profile import ./medical_profile.json
+```
+
+### Profile Storage Location
+
+```
+~/.config/dataairlock/profiles/
+├── default.json
+├── medical_data.json
+└── hr_data.json
+```
 
 ## Directory Structure
 

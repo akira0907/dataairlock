@@ -136,6 +136,12 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `scan-doc` | Word/PPTのPII検出 |
 | `anonymize-doc` | Word/PPTの匿名化 |
 | `restore-doc` | Word/PPTの復元 |
+| `profile list` | 保存されたプロファイル一覧 |
+| `profile show` | プロファイルの詳細表示 |
+| `profile delete` | プロファイルを削除 |
+| `profile export` | プロファイルをJSONにエクスポート |
+| `profile import` | JSONからプロファイルをインポート |
+| `profile create-default` | デフォルトプロファイルを作成 |
 
 ## 匿名化戦略
 
@@ -144,6 +150,48 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `replace` | セマンティックIDに置換（復元可能） | 氏名、患者ID、電話番号 |
 | `generalize` | 一般化（年代、都道府県等） | 生年月日→年代、住所→都道府県 |
 | `delete` | 列ごと削除 | 不要な個人情報列 |
+
+## プロファイル機能
+
+PII処理設定をプロファイルとして保存し、次回以降の作業で再利用できます。
+定型業務（例: 毎月の患者データ処理）で同じ設定を繰り返し入力する手間を省けます。
+
+### TUIでの使用
+
+TUIでPIIを検出すると、プロファイルの使用を選択できます：
+
+```
+プロファイルを使用しますか？
+  > 📋 既存のプロファイルを使用
+    ✨ 新規に設定（プロファイル保存可）
+    ⏭️ 今回のみ設定（保存しない）
+```
+
+### CLIでの使用
+
+```bash
+# プロファイル一覧を表示
+dataairlock profile list
+
+# デフォルトプロファイルを作成
+dataairlock profile create-default
+
+# プロファイルの詳細を表示
+dataairlock profile show 医療データ
+
+# チームで共有（エクスポート/インポート）
+dataairlock profile export 医療データ -o ./medical_profile.json
+dataairlock profile import ./medical_profile.json
+```
+
+### プロファイル保存先
+
+```
+~/.config/dataairlock/profiles/
+├── default.json
+├── 医療データ.json
+└── 人事データ.json
+```
 
 ## ディレクトリ構成
 
