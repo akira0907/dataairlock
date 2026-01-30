@@ -55,6 +55,13 @@ AI_TOOLS = {
         "description": "Anthropic Claude Code CLI",
         "install_url": "https://claude.ai/code",
     },
+    "vscode": {
+        "name": "VS Code",
+        "command": "code",
+        "description": "Visual Studio Code で作業ディレクトリを開く",
+        "install_url": "https://code.visualstudio.com",
+        "open_mode": True,  # ディレクトリを開くモード
+    },
     "codex": {
         "name": "OpenAI Codex CLI",
         "command": "codex",
@@ -345,7 +352,7 @@ def select_ai_tool() -> tuple[str, str | None]:
     available_tools = get_available_ai_tools()
 
     choices = []
-    for key in ["claude", "codex", "aider", "custom"]:
+    for key in ["claude", "vscode", "codex", "aider", "custom"]:
         tool = AI_TOOLS[key]
         if key in available_tools and key != "custom":
             choices.append(f"✅ {tool['name']} ({tool['command']})")
@@ -427,6 +434,15 @@ def launch_ai_tool(
                 cwd=str(airlock_path),
                 env=env,
                 shell=True,
+            )
+        elif tool.get("open_mode"):
+            # VS Code等、ディレクトリを開くモード
+            # --wait オプションでウィンドウが閉じるまで待機
+            console.print("[dim]💡 VS Code を閉じると TUI に戻ります[/dim]")
+            console.print()
+            result = subprocess.run(
+                [command, "--wait", str(airlock_path)],
+                env=env,
             )
         else:
             result = subprocess.run(
