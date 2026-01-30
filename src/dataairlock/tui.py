@@ -23,6 +23,17 @@ from dataairlock.anonymizer import (
     load_mapping,
     save_mapping,
 )
+from dataairlock.folder_scanner import (
+    ScannedFile,
+    scan_folder,
+    format_size,
+    count_by_type,
+    total_size,
+    relative_to_mapping_name,
+    SUPPORTED_EXTENSIONS as FOLDER_EXTENSIONS,
+    CSV_EXTENSIONS,
+    DOCUMENT_EXTENSIONS,
+)
 
 console = Console()
 
@@ -379,7 +390,8 @@ def main_menu() -> Optional[str]:
         ]
     else:
         choices = [
-            "📁 新しいプロジェクトを開始",
+            "📂 フォルダから開始（推奨）",
+            "📄 ファイルから開始",
             "❓ ヘルプ",
             "🚪 終了",
         ]
@@ -619,16 +631,484 @@ def show_help():
     console.print()
     console.print(Panel(
         "[bold]DataAirlock の使い方[/bold]\n\n"
-        "1. [cyan]新しいプロジェクトを開始[/cyan]\n"
-        "   → CSVファイルを選択し、個人情報を匿名化\n\n"
-        "2. [cyan]Claude Code を起動[/cyan]\n"
+        "1. [cyan]フォルダから開始（推奨）[/cyan]\n"
+        "   → フォルダを選択し、複数ファイルを一括匿名化\n\n"
+        "2. [cyan]ファイルから開始[/cyan]\n"
+        "   → 単一ファイルを選択し、個人情報を匿名化\n\n"
+        "3. [cyan]Claude Code を起動[/cyan]\n"
         "   → 匿名化されたデータで分析作業\n\n"
-        "3. [cyan]結果を復元[/cyan]\n"
+        "4. [cyan]結果を復元[/cyan]\n"
         "   → PERSON_001 などを元の名前に戻す\n\n"
         "[dim]詳細: https://github.com/akira0907/dataairlock[/dim]",
         title="❓ ヘルプ",
     ))
     questionary.press_any_key_to_continue().ask()
+
+
+def detect_common_columns(files: list[ScannedFile]) -> dict[str, dict]:
+    """
+    複数ファイルから共通のPII列を検出
+
+    Args:
+        files: スキャンされたファイルリスト
+
+    Returns:
+        列名→{pii_type, file_count, sample_values}のマッピング
+    """
+    from collections import defaultdict
+
+    all_columns: dict[str, dict] = defaultdict(lambda: {
+        "pii_type": None,
+        "files": [],
+        "sample_values": [],
+    })
+
+    csv_files = [f for f in files if f.extension in CSV_EXTENSIONS]
+
+    for scanned_file in csv_files:
+        try:
+            df = load_dataframe(scanned_file.path)
+            pii_columns = detect_pii_columns(df)
+
+            for col_name, result in pii_columns.items():
+                all_columns[col_name]["pii_type"] = result.pii_type
+                all_columns[col_name]["files"].append(str(scanned_file.relative_path))
+                # サンプル値を追加（重複除去）
+                for sample in result.sample_values[:2]:
+                    if sample not in all_columns[col_name]["sample_values"]:
+                        all_columns[col_name]["sample_values"].append(sample)
+                        if len(all_columns[col_name]["sample_values"]) >= 3:
+                            break
+        except Exception:
+            pass
+
+    return dict(all_columns)
+
+
+def generate_airlock_docs(airlock_path: Path, files: list, session_id: str = "") -> None:
+    """
+    .airlock ディレクトリにドキュメントを生成
+
+    Args:
+        airlock_path: .airlockディレクトリのパス
+        files: 処理されたファイルリスト
+        session_id: セッションID（オプション）
+    """
+    # README.md
+    readme_content = f"""# DataAirlock Workspace
+
+このディレクトリは DataAirlock によって生成されました。
+
+## 構造
+
+```
+.airlock/
+├── data/           # 匿名化済みデータ（元と同じ構造）
+├── output/         # Claude Codeの出力先
+├── PROMPT.md       # 分析用プロンプト
+└── README.md       # このファイル
+```
+
+## ファイル一覧
+
+処理済みファイル数: {len(files)}
+
+## 注意事項
+
+- `data/` 内のファイルは個人情報が匿名化されています
+- 分析結果は `output/` に保存してください
+- 復元には元のパスワードが必要です
+- このディレクトリを .gitignore に追加することを推奨します
+
+## 復元方法
+
+```bash
+dataairlock  # TUIから「結果を復元」を選択
+```
+
+生成日時: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+"""
+
+    # PROMPT.md
+    file_list = "\n".join([f"- {f.relative_path}" for f in files[:20]])
+    if len(files) > 20:
+        file_list += f"\n- ... 他 {len(files) - 20} ファイル"
+
+    prompt_content = f"""# データ分析プロンプト
+
+## 利用可能なデータ
+
+以下のファイルが `data/` ディレクトリにあります:
+
+{file_list}
+
+## 注意事項
+
+- データ内の個人情報は匿名化されています
+  - 例: `PERSON_001`, `EMAIL_001`, `PHONE_001` など
+- 分析結果は `output/` ディレクトリに保存してください
+- 匿名化IDを使って分析を行ってください
+
+## 分析例
+
+```
+data/ 内のCSVファイルを読み込んで、基本統計を出力してください。
+結果は output/ に保存してください。
+```
+
+## 環境変数
+
+- `DATAAIRLOCK_DATA`: データディレクトリ
+- `DATAAIRLOCK_OUTPUT`: 出力ディレクトリ
+"""
+
+    # ファイル書き込み
+    readme_path = airlock_path / "README.md"
+    prompt_path = airlock_path / "PROMPT.md"
+
+    readme_path.write_text(readme_content, encoding="utf-8")
+    prompt_path.write_text(prompt_content, encoding="utf-8")
+
+
+def select_folder() -> Optional[Path]:
+    """フォルダ選択"""
+    folder_path = questionary.path(
+        "フォルダを選択（パスを入力、またはドラッグ＆ドロップ）:",
+        only_directories=True,
+        style=custom_style,
+    ).ask()
+
+    if not folder_path:
+        return None
+
+    path = Path(folder_path.strip().strip("'\""))
+    if not path.exists():
+        console.print(f"[red]エラー: フォルダが見つかりません: {path}[/red]")
+        return None
+
+    if not path.is_dir():
+        console.print(f"[red]エラー: ディレクトリではありません: {path}[/red]")
+        return None
+
+    return path
+
+
+def flow_folder_project():
+    """フォルダベースのプロジェクトフロー"""
+    project_dir = Path.cwd()
+
+    # フォルダ選択
+    console.print("\n[bold]📂 フォルダを選択[/bold]")
+    console.print("[dim]CSV/Excel/Word/PowerPointファイルを自動検出します[/dim]\n")
+
+    folder_path = select_folder()
+    if not folder_path:
+        return
+
+    # 再帰オプション
+    recursive = questionary.confirm(
+        "サブフォルダも含めますか？",
+        default=True,
+        style=custom_style,
+    ).ask()
+
+    if recursive is None:
+        return
+
+    # スキャン実行
+    console.print("\n[bold]🔍 スキャン中...[/bold]")
+    files = scan_folder(folder_path, recursive=recursive)
+
+    if not files:
+        console.print("[yellow]対象ファイルが見つかりませんでした[/yellow]")
+        questionary.press_any_key_to_continue().ask()
+        return
+
+    # 結果表示
+    type_counts = count_by_type(files)
+    total = total_size(files)
+
+    console.print(f"\n[green]✓ {len(files)}ファイルを検出[/green]")
+    for type_name, count in sorted(type_counts.items()):
+        console.print(f"  {type_name}: {count}件")
+    console.print(f"  合計サイズ: {format_size(total)}")
+
+    # ファイル一覧表示
+    show_files = questionary.confirm(
+        "ファイル一覧を表示しますか？",
+        default=False,
+        style=custom_style,
+    ).ask()
+
+    if show_files:
+        table = Table(title="検出ファイル", show_header=True)
+        table.add_column("パス")
+        table.add_column("タイプ")
+        table.add_column("サイズ")
+
+        for f in files[:20]:
+            table.add_row(
+                str(f.relative_path),
+                f.file_type_name,
+                format_size(f.size),
+            )
+
+        if len(files) > 20:
+            table.add_row("...", f"(他 {len(files) - 20}件)", "")
+
+        console.print(table)
+
+    # CSVファイルのPII検出
+    csv_files = [f for f in files if f.is_csv]
+    doc_files = [f for f in files if f.is_document]
+
+    if not csv_files and not doc_files:
+        console.print("[yellow]処理可能なファイルがありません[/yellow]")
+        questionary.press_any_key_to_continue().ask()
+        return
+
+    # PII検出（CSVファイルのみ）
+    if csv_files:
+        console.print(f"\n[bold]🔍 PII検出中... ({len(csv_files)}ファイル)[/bold]")
+        common_columns = detect_common_columns(csv_files)
+
+        if common_columns:
+            console.print(f"[yellow]⚠️ {len(common_columns)}件の個人情報列を検出[/yellow]")
+
+            # 共通列の処理方法を選択
+            column_actions = {}
+            for col_name, info in common_columns.items():
+                pii_type = info["pii_type"]
+                file_count = len(info["files"])
+                samples = ", ".join(info["sample_values"][:2]) if info["sample_values"] else "N/A"
+
+                console.print(f"\n[yellow]⚠️[/yellow] [cyan]{col_name}[/cyan] ({pii_type.value})")
+                console.print(f"   {file_count}ファイルで検出")
+                console.print(f"   サンプル: {samples}")
+
+                default_choice = "🔄 置換（PERSON_001形式）← おすすめ"
+                if pii_type in [PIIType.BIRTHDATE, PIIType.ADDRESS, PIIType.AGE]:
+                    default_choice = "📊 一般化（年代・都道府県等）"
+
+                choice = questionary.select(
+                    f"「{col_name}」の処理方法:",
+                    choices=[
+                        "🔄 置換（PERSON_001形式）← おすすめ",
+                        "📊 一般化（年代・都道府県等）",
+                        "🗑️ 削除",
+                        "⏭️ スキップ（処理しない）",
+                    ],
+                    default=default_choice,
+                    style=custom_style,
+                ).ask()
+
+                if choice is None:
+                    return
+
+                action_map = {
+                    "🔄 置換（PERSON_001形式）← おすすめ": "replace",
+                    "📊 一般化（年代・都道府県等）": "generalize",
+                    "🗑️ 削除": "delete",
+                    "⏭️ スキップ（処理しない）": "skip",
+                }
+                column_actions[col_name] = action_map[choice]
+        else:
+            console.print("[green]✓ CSVファイルにPIIは検出されませんでした[/green]")
+            column_actions = {}
+    else:
+        column_actions = {}
+        common_columns = {}
+
+    # ドキュメントの処理方法
+    doc_strategy = "replace"
+    if doc_files:
+        console.print(f"\n[bold]📝 ドキュメントファイル: {len(doc_files)}件[/bold]")
+        doc_choice = questionary.select(
+            "ドキュメント内のPII処理方法:",
+            choices=[
+                "🔄 置換（PHONE_001形式）← おすすめ",
+                "📊 一般化",
+                "⏭️ スキップ（処理しない）",
+            ],
+            style=custom_style,
+        ).ask()
+
+        if doc_choice is None:
+            return
+
+        if "スキップ" in doc_choice:
+            doc_files = []
+        elif "一般化" in doc_choice:
+            doc_strategy = "generalize"
+
+    # 処理対象がない場合
+    columns_to_process = {k: v for k, v in column_actions.items() if v != "skip"}
+    if not columns_to_process and not doc_files:
+        console.print("[yellow]処理対象がありません[/yellow]")
+        questionary.press_any_key_to_continue().ask()
+        return
+
+    # パスワード入力
+    console.print("\n[bold]🔑 パスワード設定[/bold]")
+    password = get_password(confirm=True)
+    if not password:
+        return
+
+    # 匿名化実行
+    console.print("\n[bold]匿名化を実行中...[/bold]")
+
+    airlock_path = _init_workspace(project_dir)
+    mappings_path = _get_mappings_path(project_dir)
+
+    config = {
+        "created_at": datetime.now().isoformat(),
+        "source_directory": str(folder_path),
+        "files": {},
+        "folder_mode": True,
+    }
+
+    processed_count = 0
+    error_count = 0
+
+    # CSVファイルの処理
+    for scanned_file in csv_files:
+        try:
+            df = load_dataframe(scanned_file.path)
+
+            # 衝突チェック
+            warnings = check_collision(df)
+            for w in warnings:
+                console.print(f"[yellow]{scanned_file.relative_path}: {w}[/yellow]")
+
+            # このファイルにあるPII列のみ処理
+            file_pii = detect_pii_columns(df)
+            file_actions = {
+                col: action
+                for col, action in columns_to_process.items()
+                if col in file_pii
+            }
+
+            # ファイル個別のマッピング
+            file_mapping: dict = {
+                "metadata": {
+                    "created_at": datetime.now().isoformat(),
+                    "original_file": str(scanned_file.path),
+                    "columns_processed": list(file_actions.keys()),
+                }
+            }
+
+            if file_actions:
+                anonymized_df = df.copy()
+                for col_name, action in file_actions.items():
+                    if col_name in file_pii:
+                        single_col_pii = {col_name: file_pii[col_name]}
+                        anonymized_df, col_mapping = anonymize_dataframe(
+                            anonymized_df,
+                            single_col_pii,
+                            strategy=action,
+                        )
+                        # ファイル個別マッピングに追加
+                        if col_name in col_mapping:
+                            file_mapping[col_name] = col_mapping[col_name]
+            else:
+                anonymized_df = df
+
+            # 出力（ディレクトリ構造を維持）
+            output_path = airlock_path / "data" / scanned_file.relative_path.with_suffix(".csv")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            save_dataframe(anonymized_df, output_path)
+
+            # マッピングファイル保存（ファイル個別）
+            mapping_name = relative_to_mapping_name(scanned_file.relative_path)
+            mapping_output = mappings_path / mapping_name
+            save_mapping(file_mapping, mapping_output, password)
+
+            config["files"][str(scanned_file.relative_path)] = {
+                "original": str(scanned_file.path),
+                "anonymized": str(output_path.relative_to(airlock_path)),
+                "mapping": mapping_name,
+                "pii_columns": list(file_actions.keys()),
+            }
+
+            console.print(f"  [green]✓[/green] {scanned_file.relative_path}")
+            processed_count += 1
+
+        except Exception as e:
+            console.print(f"  [red]✗[/red] {scanned_file.relative_path}: {e}")
+            error_count += 1
+
+    # ドキュメントファイルの処理
+    if doc_files:
+        from dataairlock.document_anonymizer import anonymize_document
+
+        for scanned_file in doc_files:
+            try:
+                output_path = airlock_path / "data" / scanned_file.relative_path
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+
+                result, doc_mapping = anonymize_document(
+                    scanned_file.path,
+                    output_path,
+                    doc_strategy,
+                )
+
+                # ドキュメント個別マッピング
+                doc_file_mapping: dict = {
+                    "metadata": {
+                        "created_at": datetime.now().isoformat(),
+                        "original_file": str(scanned_file.path),
+                        "type": "document",
+                        "pii_count": result.total_matches,
+                    }
+                }
+                if "values" in doc_mapping:
+                    doc_file_mapping["values"] = doc_mapping["values"]
+
+                # マッピングファイル保存（ファイル個別）
+                mapping_name = relative_to_mapping_name(scanned_file.relative_path)
+                mapping_output = mappings_path / mapping_name
+                save_mapping(doc_file_mapping, mapping_output, password)
+
+                config["files"][str(scanned_file.relative_path)] = {
+                    "original": str(scanned_file.path),
+                    "anonymized": str(output_path.relative_to(airlock_path)),
+                    "mapping": mapping_name,
+                    "type": "document",
+                    "pii_count": result.total_matches,
+                }
+
+                console.print(f"  [green]✓[/green] {scanned_file.relative_path} ({result.total_matches}件のPII)")
+                processed_count += 1
+
+            except Exception as e:
+                console.print(f"  [red]✗[/red] {scanned_file.relative_path}: {e}")
+                error_count += 1
+
+    # ドキュメント生成
+    generate_airlock_docs(airlock_path, files)
+
+    # 設定保存
+    _save_workspace_config(project_dir, config)
+
+    console.print()
+    console.print(Panel(
+        f"[green]✅ {processed_count}ファイルを処理しました[/green]"
+        + (f"\n[yellow]⚠️ {error_count}ファイルでエラー[/yellow]" if error_count else ""),
+        title="🔒 完了",
+    ))
+
+    # 次のアクション
+    next_action = questionary.select(
+        "次のアクションは？",
+        choices=[
+            "🚀 Claude Code を起動",
+            "🔙 メニューに戻る",
+        ],
+        style=custom_style,
+    ).ask()
+
+    if next_action == "🚀 Claude Code を起動":
+        flow_launch_claude(password)
 
 
 def run_tui():
@@ -640,7 +1120,9 @@ def run_tui():
             if choice is None or choice == "🚪 終了":
                 console.print("\n[cyan]終了します[/cyan]")
                 break
-            elif choice == "📁 新しいプロジェクトを開始" or choice == "📁 ファイルを追加":
+            elif choice == "📂 フォルダから開始（推奨）":
+                flow_folder_project()
+            elif choice == "📄 ファイルから開始" or choice == "📁 ファイルを追加":
                 flow_new_project()
             elif choice == "🚀 Claude Code を起動":
                 flow_launch_claude()
