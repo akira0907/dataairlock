@@ -36,6 +36,12 @@ from dataairlock.folder_scanner import (
     CSV_EXTENSIONS,
     DOCUMENT_EXTENSIONS,
 )
+from dataairlock.profile import (
+    Profile,
+    ProfileManager,
+    create_profile_from_actions,
+    pii_type_to_profile_key,
+)
 
 console = Console()
 
@@ -988,6 +994,194 @@ def detect_common_columns(files: list[ScannedFile]) -> dict[str, dict]:
     return dict(all_columns)
 
 
+def select_profile_mode() -> str | None:
+    """
+    プロファイル使用モードを選択
+
+    Returns:
+        "use_existing": 既存プロファイルを使用
+        "new": 新規に設定（プロファイル保存可）
+        "once": 今回のみ設定（保存しない）
+        None: キャンセル
+    """
+    choice = questionary.select(
+        "プロファイルを使用しますか？",
+        choices=[
+            "📋 既存のプロファイルを使用",
+            "✨ 新規に設定（プロファイル保存可）",
+            "⏭️ 今回のみ設定（保存しない）",
+        ],
+        style=custom_style,
+    ).ask()
+
+    if choice is None:
+        return None
+
+    if "既存" in choice:
+        return "use_existing"
+    elif "新規" in choice:
+        return "new"
+    else:
+        return "once"
+
+
+def select_existing_profile(manager: ProfileManager) -> Profile | None:
+    """
+    既存プロファイルを選択
+
+    Args:
+        manager: ProfileManager インスタンス
+
+    Returns:
+        選択されたプロファイル、または None（キャンセル）
+    """
+    profiles = manager.list_profiles()
+
+    if not profiles:
+        console.print("[yellow]保存されたプロファイルがありません[/yellow]")
+        return None
+
+    choices = []
+    for p in profiles:
+        last_used = ""
+        if p.last_used_at:
+            last_used = f" (最終使用: {p.last_used_at.strftime('%Y-%m-%d')})"
+        elif p.updated_at:
+            last_used = f" (更新: {p.updated_at.strftime('%Y-%m-%d')})"
+        choices.append(f"{p.name}{last_used}")
+
+    choices.append("← 戻る")
+
+    choice = questionary.select(
+        "プロファイルを選択:",
+        choices=choices,
+        style=custom_style,
+    ).ask()
+
+    if choice is None or "戻る" in choice:
+        return None
+
+    # 選択されたプロファイルを取得
+    selected_name = choice.split(" (")[0]
+    for p in profiles:
+        if p.name == selected_name:
+            return p
+
+    return None
+
+
+def apply_profile_to_columns(
+    profile: Profile,
+    common_columns: dict[str, dict],
+) -> tuple[dict[str, str], list[str]]:
+    """
+    プロファイルを列に適用
+
+    Args:
+        profile: 適用するプロファイル
+        common_columns: 検出されたPII列
+
+    Returns:
+        (column_actions, unmatched_columns)
+        column_actions: 列名→アクション のマッピング
+        unmatched_columns: マッチしなかった列名のリスト
+    """
+    column_actions = {}
+    unmatched_columns = []
+
+    for col_name, info in common_columns.items():
+        pii_type = info["pii_type"]
+        pii_key = pii_type_to_profile_key(pii_type.value) if pii_type else None
+
+        action = profile.get_action_for_column(col_name, pii_key)
+        if action:
+            column_actions[col_name] = action
+        else:
+            unmatched_columns.append(col_name)
+
+    return column_actions, unmatched_columns
+
+
+def offer_save_profile(
+    column_actions: dict[str, str],
+    common_columns: dict[str, dict],
+    manager: ProfileManager,
+) -> None:
+    """
+    プロファイル保存を提案
+
+    Args:
+        column_actions: 列名→アクション のマッピング
+        common_columns: 検出されたPII列情報
+        manager: ProfileManager インスタンス
+    """
+    choice = questionary.select(
+        "この設定をプロファイルとして保存しますか？",
+        choices=[
+            "💾 新規プロファイルとして保存",
+            "📝 既存プロファイルを更新",
+            "⏭️ 保存しない",
+        ],
+        style=custom_style,
+    ).ask()
+
+    if choice is None or "保存しない" in choice:
+        return
+
+    # 列名とPIIタイプの対応を作成
+    column_pii_types = {}
+    for col_name, action in column_actions.items():
+        if col_name in common_columns:
+            pii_type = common_columns[col_name]["pii_type"]
+            pii_key = pii_type_to_profile_key(pii_type.value) if pii_type else "unknown"
+        else:
+            pii_key = "unknown"
+        column_pii_types[col_name] = (pii_key, action)
+
+    if "新規" in choice:
+        # 新規プロファイル作成
+        name = questionary.text(
+            "プロファイル名:",
+            style=custom_style,
+        ).ask()
+
+        if not name:
+            return
+
+        profile = create_profile_from_actions(name, column_pii_types)
+        path = manager.save(profile)
+        console.print(f"[green]✓ プロファイルを保存しました: {path}[/green]")
+
+    elif "更新" in choice:
+        # 既存プロファイルを更新
+        profiles = manager.list_profiles()
+        if not profiles:
+            console.print("[yellow]保存されたプロファイルがありません[/yellow]")
+            return
+
+        profile_choices = [p.name for p in profiles]
+        profile_choices.append("← キャンセル")
+
+        selected = questionary.select(
+            "更新するプロファイル:",
+            choices=profile_choices,
+            style=custom_style,
+        ).ask()
+
+        if selected is None or "キャンセル" in selected:
+            return
+
+        profile = manager.load(selected)
+        if profile:
+            # 既存の設定を更新
+            for col_name, (pii_key, action) in column_pii_types.items():
+                profile.update_column_rule(col_name, action)
+                if pii_key:
+                    profile.update_pii_type_default(pii_key, action)
+            manager.save(profile)
+            console.print(f"[green]✓ プロファイル「{selected}」を更新しました[/green]")
+
+
 def generate_airlock_docs(airlock_path: Path, files: list, session_id: str = "") -> None:
     """
     .airlock ディレクトリにドキュメントを生成
@@ -1281,6 +1475,10 @@ def flow_folder_project():
         return
 
     # PII検出（CSVファイルのみ）
+    profile_manager = ProfileManager()
+    profile_mode = None  # プロファイルモード追跡用
+    used_profile = None  # 使用したプロファイル
+
     if csv_files:
         console.print(f"\n[bold]🔍 PII検出中... ({len(csv_files)}ファイル)[/bold]")
         common_columns = detect_common_columns(csv_files)
@@ -1288,43 +1486,108 @@ def flow_folder_project():
         if common_columns:
             console.print(f"[yellow]⚠️ {len(common_columns)}件の個人情報列を検出[/yellow]")
 
-            # 共通列の処理方法を選択
+            # プロファイル使用の確認
+            profile_mode = select_profile_mode()
+            if profile_mode is None:
+                return
+
             column_actions = {}
-            for col_name, info in common_columns.items():
-                pii_type = info["pii_type"]
-                file_count = len(info["files"])
-                samples = ", ".join(info["sample_values"][:2]) if info["sample_values"] else "N/A"
 
-                console.print(f"\n[yellow]⚠️[/yellow] [cyan]{col_name}[/cyan] ({pii_type.value})")
-                console.print(f"   {file_count}ファイルで検出")
-                console.print(f"   サンプル: {samples}")
+            if profile_mode == "use_existing":
+                # 既存プロファイルを使用
+                profile = select_existing_profile(profile_manager)
+                if profile is None:
+                    # プロファイル選択がキャンセルされた場合、手動モードにフォールバック
+                    profile_mode = "once"
+                else:
+                    used_profile = profile
+                    profile.mark_used()
+                    profile_manager.save(profile)
 
-                default_choice = "🔄 置換（PERSON_001形式）← おすすめ"
-                if pii_type in [PIIType.BIRTHDATE, PIIType.ADDRESS, PIIType.AGE]:
-                    default_choice = "📊 一般化（年代・都道府県等）"
+                    # プロファイルを適用
+                    column_actions, unmatched = apply_profile_to_columns(profile, common_columns)
 
-                choice = questionary.select(
-                    f"「{col_name}」の処理方法:",
-                    choices=[
-                        "🔄 置換（PERSON_001形式）← おすすめ",
-                        "📊 一般化（年代・都道府県等）",
-                        "🗑️ 削除",
-                        "⏭️ スキップ（処理しない）",
-                    ],
-                    default=default_choice,
-                    style=custom_style,
-                ).ask()
+                    if column_actions:
+                        console.print(f"\n[green]✓ プロファイル「{profile.name}」を適用しました[/green]")
+                        for col_name, action in column_actions.items():
+                            action_label = {"replace": "置換", "generalize": "一般化", "delete": "削除", "skip": "スキップ"}
+                            console.print(f"   {col_name}: {action_label.get(action, action)}")
 
-                if choice is None:
-                    return
+                    # マッチしなかった列は手動で設定
+                    if unmatched:
+                        console.print(f"\n[yellow]⚠️ {len(unmatched)}件の列がプロファイルにマッチしませんでした[/yellow]")
+                        for col_name in unmatched:
+                            info = common_columns[col_name]
+                            pii_type = info["pii_type"]
+                            samples = ", ".join(info["sample_values"][:2]) if info["sample_values"] else "N/A"
 
-                action_map = {
-                    "🔄 置換（PERSON_001形式）← おすすめ": "replace",
-                    "📊 一般化（年代・都道府県等）": "generalize",
-                    "🗑️ 削除": "delete",
-                    "⏭️ スキップ（処理しない）": "skip",
-                }
-                column_actions[col_name] = action_map[choice]
+                            console.print(f"\n[yellow]⚠️[/yellow] [cyan]{col_name}[/cyan] ({pii_type.value})")
+                            console.print(f"   サンプル: {samples}")
+
+                            default_choice = "🔄 置換（PERSON_001形式）← おすすめ"
+                            if pii_type in [PIIType.BIRTHDATE, PIIType.ADDRESS, PIIType.AGE]:
+                                default_choice = "📊 一般化（年代・都道府県等）"
+
+                            choice = questionary.select(
+                                f"「{col_name}」の処理方法:",
+                                choices=[
+                                    "🔄 置換（PERSON_001形式）← おすすめ",
+                                    "📊 一般化（年代・都道府県等）",
+                                    "🗑️ 削除",
+                                    "⏭️ スキップ（処理しない）",
+                                ],
+                                default=default_choice,
+                                style=custom_style,
+                            ).ask()
+
+                            if choice is None:
+                                return
+
+                            action_map = {
+                                "🔄 置換（PERSON_001形式）← おすすめ": "replace",
+                                "📊 一般化（年代・都道府県等）": "generalize",
+                                "🗑️ 削除": "delete",
+                                "⏭️ スキップ（処理しない）": "skip",
+                            }
+                            column_actions[col_name] = action_map[choice]
+
+            # 手動モード（new または once、またはプロファイル選択キャンセル時）
+            if profile_mode in ["new", "once"] or (profile_mode == "use_existing" and used_profile is None):
+                for col_name, info in common_columns.items():
+                    pii_type = info["pii_type"]
+                    file_count = len(info["files"])
+                    samples = ", ".join(info["sample_values"][:2]) if info["sample_values"] else "N/A"
+
+                    console.print(f"\n[yellow]⚠️[/yellow] [cyan]{col_name}[/cyan] ({pii_type.value})")
+                    console.print(f"   {file_count}ファイルで検出")
+                    console.print(f"   サンプル: {samples}")
+
+                    default_choice = "🔄 置換（PERSON_001形式）← おすすめ"
+                    if pii_type in [PIIType.BIRTHDATE, PIIType.ADDRESS, PIIType.AGE]:
+                        default_choice = "📊 一般化（年代・都道府県等）"
+
+                    choice = questionary.select(
+                        f"「{col_name}」の処理方法:",
+                        choices=[
+                            "🔄 置換（PERSON_001形式）← おすすめ",
+                            "📊 一般化（年代・都道府県等）",
+                            "🗑️ 削除",
+                            "⏭️ スキップ（処理しない）",
+                        ],
+                        default=default_choice,
+                        style=custom_style,
+                    ).ask()
+
+                    if choice is None:
+                        return
+
+                    action_map = {
+                        "🔄 置換（PERSON_001形式）← おすすめ": "replace",
+                        "📊 一般化（年代・都道府県等）": "generalize",
+                        "🗑️ 削除": "delete",
+                        "⏭️ スキップ（処理しない）": "skip",
+                    }
+                    column_actions[col_name] = action_map[choice]
         else:
             console.print("[green]✓ CSVファイルにPIIは検出されませんでした[/green]")
             column_actions = {}
@@ -1531,6 +1794,10 @@ def flow_folder_project():
         title="🔒 完了",
     ))
 
+    # プロファイル保存の提案（newモードの場合）
+    if profile_mode == "new" and column_actions and common_columns:
+        offer_save_profile(column_actions, common_columns, profile_manager)
+
     # 次のアクション
     next_action = questionary.select(
         "次のアクションは？",
@@ -1601,6 +1868,10 @@ def flow_add_folder():
         return
 
     # PII検出（CSVファイルのみ）
+    profile_manager = ProfileManager()
+    profile_mode = None
+    used_profile = None
+
     if csv_files:
         console.print(f"\n[bold]🔍 PII検出中... ({len(csv_files)}ファイル)[/bold]")
         common_columns = detect_common_columns(csv_files)
@@ -1608,43 +1879,103 @@ def flow_add_folder():
         if common_columns:
             console.print(f"[yellow]⚠️ {len(common_columns)}件の個人情報列を検出[/yellow]")
 
-            # 共通列の処理方法を選択
+            # プロファイル使用の確認
+            profile_mode = select_profile_mode()
+            if profile_mode is None:
+                return
+
             column_actions = {}
-            for col_name, info in common_columns.items():
-                pii_type = info["pii_type"]
-                file_count = len(info["files"])
-                samples = ", ".join(info["sample_values"][:2]) if info["sample_values"] else "N/A"
 
-                console.print(f"\n[yellow]⚠️[/yellow] [cyan]{col_name}[/cyan] ({pii_type.value})")
-                console.print(f"   {file_count}ファイルで検出")
-                console.print(f"   サンプル: {samples}")
+            if profile_mode == "use_existing":
+                profile = select_existing_profile(profile_manager)
+                if profile is None:
+                    profile_mode = "once"
+                else:
+                    used_profile = profile
+                    profile.mark_used()
+                    profile_manager.save(profile)
 
-                default_choice = "🔄 置換（PERSON_001形式）← おすすめ"
-                if pii_type in [PIIType.BIRTHDATE, PIIType.ADDRESS, PIIType.AGE]:
-                    default_choice = "📊 一般化（年代・都道府県等）"
+                    column_actions, unmatched = apply_profile_to_columns(profile, common_columns)
 
-                choice = questionary.select(
-                    f"「{col_name}」の処理方法:",
-                    choices=[
-                        "🔄 置換（PERSON_001形式）← おすすめ",
-                        "📊 一般化（年代・都道府県等）",
-                        "🗑️ 削除",
-                        "⏭️ スキップ（処理しない）",
-                    ],
-                    default=default_choice,
-                    style=custom_style,
-                ).ask()
+                    if column_actions:
+                        console.print(f"\n[green]✓ プロファイル「{profile.name}」を適用しました[/green]")
+                        for col_name, action in column_actions.items():
+                            action_label = {"replace": "置換", "generalize": "一般化", "delete": "削除", "skip": "スキップ"}
+                            console.print(f"   {col_name}: {action_label.get(action, action)}")
 
-                if choice is None:
-                    return
+                    if unmatched:
+                        console.print(f"\n[yellow]⚠️ {len(unmatched)}件の列がプロファイルにマッチしませんでした[/yellow]")
+                        for col_name in unmatched:
+                            info = common_columns[col_name]
+                            pii_type = info["pii_type"]
+                            samples = ", ".join(info["sample_values"][:2]) if info["sample_values"] else "N/A"
 
-                action_map = {
-                    "🔄 置換（PERSON_001形式）← おすすめ": "replace",
-                    "📊 一般化（年代・都道府県等）": "generalize",
-                    "🗑️ 削除": "delete",
-                    "⏭️ スキップ（処理しない）": "skip",
-                }
-                column_actions[col_name] = action_map[choice]
+                            console.print(f"\n[yellow]⚠️[/yellow] [cyan]{col_name}[/cyan] ({pii_type.value})")
+                            console.print(f"   サンプル: {samples}")
+
+                            default_choice = "🔄 置換（PERSON_001形式）← おすすめ"
+                            if pii_type in [PIIType.BIRTHDATE, PIIType.ADDRESS, PIIType.AGE]:
+                                default_choice = "📊 一般化（年代・都道府県等）"
+
+                            choice = questionary.select(
+                                f"「{col_name}」の処理方法:",
+                                choices=[
+                                    "🔄 置換（PERSON_001形式）← おすすめ",
+                                    "📊 一般化（年代・都道府県等）",
+                                    "🗑️ 削除",
+                                    "⏭️ スキップ（処理しない）",
+                                ],
+                                default=default_choice,
+                                style=custom_style,
+                            ).ask()
+
+                            if choice is None:
+                                return
+
+                            action_map = {
+                                "🔄 置換（PERSON_001形式）← おすすめ": "replace",
+                                "📊 一般化（年代・都道府県等）": "generalize",
+                                "🗑️ 削除": "delete",
+                                "⏭️ スキップ（処理しない）": "skip",
+                            }
+                            column_actions[col_name] = action_map[choice]
+
+            if profile_mode in ["new", "once"] or (profile_mode == "use_existing" and used_profile is None):
+                for col_name, info in common_columns.items():
+                    pii_type = info["pii_type"]
+                    file_count = len(info["files"])
+                    samples = ", ".join(info["sample_values"][:2]) if info["sample_values"] else "N/A"
+
+                    console.print(f"\n[yellow]⚠️[/yellow] [cyan]{col_name}[/cyan] ({pii_type.value})")
+                    console.print(f"   {file_count}ファイルで検出")
+                    console.print(f"   サンプル: {samples}")
+
+                    default_choice = "🔄 置換（PERSON_001形式）← おすすめ"
+                    if pii_type in [PIIType.BIRTHDATE, PIIType.ADDRESS, PIIType.AGE]:
+                        default_choice = "📊 一般化（年代・都道府県等）"
+
+                    choice = questionary.select(
+                        f"「{col_name}」の処理方法:",
+                        choices=[
+                            "🔄 置換（PERSON_001形式）← おすすめ",
+                            "📊 一般化（年代・都道府県等）",
+                            "🗑️ 削除",
+                            "⏭️ スキップ（処理しない）",
+                        ],
+                        default=default_choice,
+                        style=custom_style,
+                    ).ask()
+
+                    if choice is None:
+                        return
+
+                    action_map = {
+                        "🔄 置換（PERSON_001形式）← おすすめ": "replace",
+                        "📊 一般化（年代・都道府県等）": "generalize",
+                        "🗑️ 削除": "delete",
+                        "⏭️ スキップ（処理しない）": "skip",
+                    }
+                    column_actions[col_name] = action_map[choice]
         else:
             console.print("[green]✓ CSVファイルにPIIは検出されませんでした[/green]")
             column_actions = {}

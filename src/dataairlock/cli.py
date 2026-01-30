@@ -36,6 +36,7 @@ from dataairlock.document_anonymizer import (
     deanonymize_document,
     scan_document,
 )
+from dataairlock.profile import ProfileManager
 
 app = typer.Typer(
     name="dataairlock",
@@ -2692,6 +2693,173 @@ def start():
     """
     from dataairlock.tui import run_tui
     run_tui()
+
+
+# プロファイル管理コマンド
+profile_app = typer.Typer(
+    name="profile",
+    help="PII処理プロファイルの管理",
+)
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command(name="list")
+def profile_list():
+    """
+    保存されたプロファイル一覧を表示
+    """
+    manager = ProfileManager()
+    profiles = manager.list_profiles()
+
+    if not profiles:
+        console.print("[yellow]保存されたプロファイルがありません[/yellow]")
+        console.print(f"[dim]プロファイルは {manager.profile_dir} に保存されます[/dim]")
+        return
+
+    table = Table(title="プロファイル一覧", show_header=True)
+    table.add_column("名前")
+    table.add_column("列ルール数")
+    table.add_column("PIIタイプ数")
+    table.add_column("最終使用")
+    table.add_column("更新日")
+
+    for p in profiles:
+        last_used = p.last_used_at.strftime("%Y-%m-%d") if p.last_used_at else "-"
+        updated = p.updated_at.strftime("%Y-%m-%d") if p.updated_at else "-"
+        table.add_row(
+            p.name,
+            str(len(p.column_rules)),
+            str(len(p.pii_type_defaults)),
+            last_used,
+            updated,
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]保存先: {manager.profile_dir}[/dim]")
+
+
+@profile_app.command(name="show")
+def profile_show(
+    name: str = typer.Argument(..., help="プロファイル名"),
+):
+    """
+    プロファイルの詳細を表示
+    """
+    manager = ProfileManager()
+    profile = manager.load(name)
+
+    if not profile:
+        console.print(f"[red]プロファイル「{name}」が見つかりません[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(f"[bold]{profile.name}[/bold]", title="プロファイル"))
+
+    if profile.column_rules:
+        console.print("\n[bold]列ルール:[/bold]")
+        for col, action in profile.column_rules.items():
+            console.print(f"  {col}: {action}")
+
+    if profile.pii_type_defaults:
+        console.print("\n[bold]PIIタイプデフォルト:[/bold]")
+        for pii_type, action in profile.pii_type_defaults.items():
+            console.print(f"  {pii_type}: {action}")
+
+    console.print(f"\n[dim]作成日: {profile.created_at.strftime('%Y-%m-%d %H:%M')}[/dim]")
+    if profile.updated_at:
+        console.print(f"[dim]更新日: {profile.updated_at.strftime('%Y-%m-%d %H:%M')}[/dim]")
+    if profile.last_used_at:
+        console.print(f"[dim]最終使用: {profile.last_used_at.strftime('%Y-%m-%d %H:%M')}[/dim]")
+
+
+@profile_app.command(name="delete")
+def profile_delete(
+    name: str = typer.Argument(..., help="削除するプロファイル名"),
+    force: bool = typer.Option(False, "--force", "-f", help="確認なしで削除"),
+):
+    """
+    プロファイルを削除
+    """
+    manager = ProfileManager()
+
+    if not manager.exists(name):
+        console.print(f"[red]プロファイル「{name}」が見つかりません[/red]")
+        raise typer.Exit(1)
+
+    if not force:
+        confirm = Confirm.ask(f"プロファイル「{name}」を削除しますか？")
+        if not confirm:
+            console.print("[yellow]キャンセルしました[/yellow]")
+            return
+
+    if manager.delete(name):
+        console.print(f"[green]✓ プロファイル「{name}」を削除しました[/green]")
+    else:
+        console.print(f"[red]削除に失敗しました[/red]")
+        raise typer.Exit(1)
+
+
+@profile_app.command(name="export")
+def profile_export(
+    name: str = typer.Argument(..., help="エクスポートするプロファイル名"),
+    output: Path = typer.Option(None, "--output", "-o", help="出力ファイルパス"),
+):
+    """
+    プロファイルをJSONファイルにエクスポート（チーム共有用）
+    """
+    manager = ProfileManager()
+
+    if not manager.exists(name):
+        console.print(f"[red]プロファイル「{name}」が見つかりません[/red]")
+        raise typer.Exit(1)
+
+    if output is None:
+        output = Path(f"{name}_profile.json")
+
+    if manager.export_profile(name, output):
+        console.print(f"[green]✓ プロファイルを {output} にエクスポートしました[/green]")
+    else:
+        console.print(f"[red]エクスポートに失敗しました[/red]")
+        raise typer.Exit(1)
+
+
+@profile_app.command(name="import")
+def profile_import(
+    input_file: Path = typer.Argument(..., help="インポートするJSONファイル"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="既存プロファイルを上書き"),
+):
+    """
+    JSONファイルからプロファイルをインポート
+    """
+    manager = ProfileManager()
+
+    if not input_file.exists():
+        console.print(f"[red]ファイルが見つかりません: {input_file}[/red]")
+        raise typer.Exit(1)
+
+    profile = manager.import_profile(input_file, overwrite=overwrite)
+    if profile:
+        console.print(f"[green]✓ プロファイル「{profile.name}」をインポートしました[/green]")
+    else:
+        console.print(f"[red]インポートに失敗しました（同名のプロファイルが存在する場合は --overwrite を指定）[/red]")
+        raise typer.Exit(1)
+
+
+@profile_app.command(name="create-default")
+def profile_create_default():
+    """
+    デフォルトプロファイルを作成
+    """
+    manager = ProfileManager()
+
+    if manager.exists("default"):
+        confirm = Confirm.ask("デフォルトプロファイルは既に存在します。上書きしますか？")
+        if not confirm:
+            console.print("[yellow]キャンセルしました[/yellow]")
+            return
+
+    profile = manager.create_default_profile()
+    console.print(f"[green]✓ デフォルトプロファイルを作成しました[/green]")
+    console.print(f"[dim]保存先: {manager._get_profile_path(profile.name)}[/dim]")
 
 
 if __name__ == "__main__":
