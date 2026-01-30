@@ -42,6 +42,21 @@ from dataairlock.profile import (
     create_profile_from_actions,
     pii_type_to_profile_key,
 )
+from dataairlock.hybrid_detector import (
+    HybridPIIDetector,
+    DetectionMode,
+    OllamaSetupStatus,
+    check_ollama_status,
+    setup_ollama_interactive,
+)
+from dataairlock.llm_client import (
+    is_ollama_installed,
+    is_ollama_running,
+    get_ollama_install_instructions,
+    start_ollama_server,
+    pull_model,
+    get_available_models,
+)
 
 console = Console()
 
@@ -954,12 +969,161 @@ def show_help():
     questionary.press_any_key_to_continue().ask()
 
 
-def detect_common_columns(files: list[ScannedFile]) -> dict[str, dict]:
+def prompt_ollama_setup(required_model: str = "llama3.1:8b") -> bool:
+    """
+    Ollamaセットアップを対話的に行う
+
+    Returns:
+        セットアップ成功/LLM使用可能ならTrue
+    """
+    status = check_ollama_status(required_model)
+
+    if status == OllamaSetupStatus.READY:
+        return True
+
+    if status == OllamaSetupStatus.NOT_INSTALLED:
+        console.print("\n[yellow]⚠️ Ollamaがインストールされていません[/yellow]")
+        console.print(f"[dim]{get_ollama_install_instructions()}[/dim]")
+
+        choice = questionary.select(
+            "Ollamaを使用しますか？",
+            choices=[
+                "⏭️ LLMなしで続行（ルールベース検出のみ）",
+                "📖 インストール手順を表示",
+                "❌ キャンセル",
+            ],
+            style=custom_style,
+        ).ask()
+
+        if choice is None or "キャンセル" in choice:
+            return False
+        if "インストール手順" in choice:
+            console.print(f"\n[bold]Ollamaインストール方法:[/bold]")
+            console.print(f"  {get_ollama_install_instructions()}")
+            console.print("\n[dim]インストール後に再度実行してください[/dim]")
+            questionary.press_any_key_to_continue().ask()
+        return False
+
+    if status == OllamaSetupStatus.NOT_RUNNING:
+        console.print("\n[yellow]⚠️ Ollamaサーバーが起動していません[/yellow]")
+
+        choice = questionary.select(
+            "どうしますか？",
+            choices=[
+                "🚀 Ollamaサーバーを起動",
+                "⏭️ LLMなしで続行（ルールベース検出のみ）",
+                "❌ キャンセル",
+            ],
+            style=custom_style,
+        ).ask()
+
+        if choice is None or "キャンセル" in choice:
+            return False
+        if "LLMなし" in choice:
+            return False
+        if "起動" in choice:
+            console.print("[dim]Ollamaサーバーを起動中...[/dim]")
+            if start_ollama_server():
+                console.print("[green]✓ Ollamaサーバーを起動しました[/green]")
+                # モデルチェックへ
+                status = check_ollama_status(required_model)
+                if status == OllamaSetupStatus.READY:
+                    return True
+            else:
+                console.print("[red]サーバーの起動に失敗しました[/red]")
+                console.print("[dim]手動で 'ollama serve' を実行してください[/dim]")
+                return False
+
+    if status == OllamaSetupStatus.NO_MODEL:
+        console.print(f"\n[yellow]⚠️ モデル '{required_model}' がありません[/yellow]")
+        available = get_available_models()
+        if available:
+            console.print(f"[dim]利用可能なモデル: {', '.join(available[:5])}[/dim]")
+
+        choice = questionary.select(
+            "どうしますか？",
+            choices=[
+                f"📥 モデルをダウンロード ({required_model})",
+                "⏭️ LLMなしで続行（ルールベース検出のみ）",
+                "❌ キャンセル",
+            ],
+            style=custom_style,
+        ).ask()
+
+        if choice is None or "キャンセル" in choice:
+            return False
+        if "LLMなし" in choice:
+            return False
+        if "ダウンロード" in choice:
+            console.print(f"[dim]モデル '{required_model}' をダウンロード中...[/dim]")
+            console.print("[dim]（初回は数GB、数分かかる場合があります）[/dim]")
+            if pull_model(required_model):
+                console.print(f"[green]✓ モデル '{required_model}' をダウンロードしました[/green]")
+                return True
+            else:
+                console.print("[red]モデルのダウンロードに失敗しました[/red]")
+                return False
+
+    return False
+
+
+def select_detection_mode() -> DetectionMode | None:
+    """
+    PII検出モードを選択
+
+    Returns:
+        選択されたDetectionMode、またはNone（キャンセル）
+    """
+    # Ollamaが使える状態かチェック
+    ollama_available = check_ollama_status() == OllamaSetupStatus.READY
+
+    if ollama_available:
+        choices = [
+            "🔄 ハイブリッド（ルール + LLM）← おすすめ",
+            "📏 ルールベースのみ（高速）",
+            "🤖 LLMのみ（精度重視）",
+        ]
+    else:
+        choices = [
+            "📏 ルールベースのみ（高速）",
+            "🔧 LLMを設定して使用",
+        ]
+
+    choice = questionary.select(
+        "PII検出モードを選択:",
+        choices=choices,
+        style=custom_style,
+    ).ask()
+
+    if choice is None:
+        return None
+
+    if "ハイブリッド" in choice:
+        return DetectionMode.HYBRID
+    elif "LLMのみ" in choice:
+        return DetectionMode.LLM_ONLY
+    elif "ルールベース" in choice:
+        return DetectionMode.RULE_ONLY
+    elif "LLMを設定" in choice:
+        # Ollamaセットアップを実行
+        if prompt_ollama_setup():
+            # セットアップ成功したらモード選択に戻る
+            return select_detection_mode()
+        return DetectionMode.RULE_ONLY
+
+    return DetectionMode.RULE_ONLY
+
+
+def detect_common_columns(
+    files: list[ScannedFile],
+    detection_mode: DetectionMode = DetectionMode.RULE_ONLY,
+) -> dict[str, dict]:
     """
     複数ファイルから共通のPII列を検出
 
     Args:
         files: スキャンされたファイルリスト
+        detection_mode: 検出モード（RULE_ONLY, LLM_ONLY, HYBRID）
 
     Returns:
         列名→{pii_type, file_count, sample_values}のマッピング
@@ -970,24 +1134,50 @@ def detect_common_columns(files: list[ScannedFile]) -> dict[str, dict]:
         "pii_type": None,
         "files": [],
         "sample_values": [],
+        "detected_by": None,
     })
 
     csv_files = [f for f in files if f.extension in CSV_EXTENSIONS]
 
+    # ハイブリッド検出器を使用
+    if detection_mode != DetectionMode.RULE_ONLY:
+        detector = HybridPIIDetector(mode=detection_mode)
+    else:
+        detector = None
+
     for scanned_file in csv_files:
         try:
             df = load_dataframe(scanned_file.path)
-            pii_columns = detect_pii_columns(df)
 
-            for col_name, result in pii_columns.items():
-                all_columns[col_name]["pii_type"] = result.pii_type
-                all_columns[col_name]["files"].append(str(scanned_file.relative_path))
-                # サンプル値を追加（重複除去）
-                for sample in result.sample_values[:2]:
-                    if sample not in all_columns[col_name]["sample_values"]:
-                        all_columns[col_name]["sample_values"].append(sample)
-                        if len(all_columns[col_name]["sample_values"]) >= 3:
-                            break
+            if detector and detection_mode != DetectionMode.RULE_ONLY:
+                # ハイブリッド/LLM検出
+                hybrid_results = detector.detect_pii_columns(df)
+                pii_columns = detector.to_pii_column_results(hybrid_results)
+
+                for col_name, result in pii_columns.items():
+                    all_columns[col_name]["pii_type"] = result.pii_type
+                    all_columns[col_name]["files"].append(str(scanned_file.relative_path))
+                    all_columns[col_name]["detected_by"] = result.matched_by
+                    # サンプル値を追加（重複除去）
+                    for sample in result.sample_values[:2]:
+                        if sample not in all_columns[col_name]["sample_values"]:
+                            all_columns[col_name]["sample_values"].append(sample)
+                            if len(all_columns[col_name]["sample_values"]) >= 3:
+                                break
+            else:
+                # ルールベース検出のみ
+                pii_columns = detect_pii_columns(df)
+
+                for col_name, result in pii_columns.items():
+                    all_columns[col_name]["pii_type"] = result.pii_type
+                    all_columns[col_name]["files"].append(str(scanned_file.relative_path))
+                    all_columns[col_name]["detected_by"] = "rule"
+                    # サンプル値を追加（重複除去）
+                    for sample in result.sample_values[:2]:
+                        if sample not in all_columns[col_name]["sample_values"]:
+                            all_columns[col_name]["sample_values"].append(sample)
+                            if len(all_columns[col_name]["sample_values"]) >= 3:
+                                break
         except Exception:
             pass
 
@@ -1478,10 +1668,26 @@ def flow_folder_project():
     profile_manager = ProfileManager()
     profile_mode = None  # プロファイルモード追跡用
     used_profile = None  # 使用したプロファイル
+    detection_mode = DetectionMode.RULE_ONLY  # デフォルト
 
     if csv_files:
+        # 検出モード選択（オプション）
+        use_llm = questionary.confirm(
+            "LLMを使用してPII検出の精度を向上させますか？",
+            default=False,
+            style=custom_style,
+        ).ask()
+
+        if use_llm:
+            detection_mode = select_detection_mode()
+            if detection_mode is None:
+                return
+
         console.print(f"\n[bold]🔍 PII検出中... ({len(csv_files)}ファイル)[/bold]")
-        common_columns = detect_common_columns(csv_files)
+        if detection_mode != DetectionMode.RULE_ONLY:
+            console.print(f"[dim]検出モード: {detection_mode.value}[/dim]")
+
+        common_columns = detect_common_columns(csv_files, detection_mode)
 
         if common_columns:
             console.print(f"[yellow]⚠️ {len(common_columns)}件の個人情報列を検出[/yellow]")
@@ -1871,10 +2077,26 @@ def flow_add_folder():
     profile_manager = ProfileManager()
     profile_mode = None
     used_profile = None
+    detection_mode = DetectionMode.RULE_ONLY
 
     if csv_files:
+        # 検出モード選択（オプション）
+        use_llm = questionary.confirm(
+            "LLMを使用してPII検出の精度を向上させますか？",
+            default=False,
+            style=custom_style,
+        ).ask()
+
+        if use_llm:
+            detection_mode = select_detection_mode()
+            if detection_mode is None:
+                return
+
         console.print(f"\n[bold]🔍 PII検出中... ({len(csv_files)}ファイル)[/bold]")
-        common_columns = detect_common_columns(csv_files)
+        if detection_mode != DetectionMode.RULE_ONLY:
+            console.print(f"[dim]検出モード: {detection_mode.value}[/dim]")
+
+        common_columns = detect_common_columns(csv_files, detection_mode)
 
         if common_columns:
             console.print(f"[yellow]⚠️ {len(common_columns)}件の個人情報列を検出[/yellow]")
