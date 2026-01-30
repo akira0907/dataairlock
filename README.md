@@ -1,8 +1,21 @@
 # DataAirlock
 
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Security](https://img.shields.io/badge/security-local--only-brightgreen)
+![Status](https://img.shields.io/badge/status-beta-orange)
+
 **機密データを安全にクラウドLLMへ渡すためのローカルツール**
 
-個人情報を含むデータを匿名化し、Claude Code や Codex などのクラウドLLMで安全に分析。結果を元のデータに復元できます。
+DataAirlockは、個人情報を含むデータをローカル環境で匿名化し、Claude Code や Codex などのクラウドLLMで安全に分析するためのCLIツールです。処理結果はローカルで元のデータ（実名）に復元できます。
+
+[English Documentation](./README_en.md) | [不具合報告](https://github.com/akira0907/dataairlock/issues)
+
+## 免責事項
+
+> **本ツールは個人情報の検出・匿名化を100%保証するものではありません。**
+> 出力データは必ずユーザー自身の目で確認してください。
+> 開発者は本ツール使用によるデータの漏洩や損害について一切の責任を負いません。
 
 ## 概念図
 
@@ -50,7 +63,7 @@ flowchart LR
 ### インストール
 
 ```bash
-# GitHubからインストール
+# GitHubからインストール（現在は開発版）
 pip install git+https://github.com/akira0907/dataairlock.git
 
 # 最新版に強制アップデート
@@ -61,6 +74,8 @@ git clone https://github.com/akira0907/dataairlock.git
 cd dataairlock
 pip install -e .
 ```
+
+> 将来的には `pip install dataairlock` で簡単にインストールできるようになる予定です。
 
 ### 基本的な使い方
 
@@ -150,7 +165,7 @@ my_project/
 
 - **マッピングファイルは暗号化**: Fernet（AES-128-CBC）で暗号化
 - **パスワード必須**: 復元にはパスワードが必要
-- **ローカル処理**: 匿名化・復元はすべてローカルで実行
+- **ローカル処理（No Data Exfiltration）**: **匿名化・復元はすべてローカルで実行。生データがクラウドに送信されることはありません。**
 - **Git除外推奨**: `.airlock_mappings/` は `.gitignore` に自動追加
 
 ## 必要条件
