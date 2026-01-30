@@ -10,7 +10,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import ollama
 import pandas as pd
 import typer
 from rich.console import Console
@@ -2248,6 +2247,7 @@ def chat(
 
     # Ollamaの接続確認
     try:
+        import ollama
         ollama_models = ollama.list()
         available_models = [m.get("name", m.get("model", "")) for m in ollama_models.get("models", [])]
     except Exception as e:
