@@ -50,7 +50,13 @@ flowchart LR
 ### インストール
 
 ```bash
-pip install dataairlock
+# GitHubからインストール
+pip install git+https://github.com/akira0907/dataairlock.git
+
+# または、ローカルでクローンしてインストール
+git clone https://github.com/akira0907/dataairlock.git
+cd dataairlock
+pip install -e .
 ```
 
 ### 基本的な使い方
