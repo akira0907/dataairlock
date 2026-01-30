@@ -564,9 +564,9 @@ class TestWorkspaceCommand:
         prompt_path = project_dir / ".airlock" / "PROMPT.md"
         content = prompt_path.read_text()
 
-        assert "利用可能なデータ" in content
+        assert "対象データ" in content
         assert "test_data" in content
-        assert "ANON_" in content
+        assert "PERSON_001" in content or "匿名化ID" in content
 
     def test_workspace_anonymized_content(self, tmp_path, sample_csv):
         """匿名化されたファイルの内容確認"""

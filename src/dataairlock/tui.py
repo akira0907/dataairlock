@@ -848,79 +848,186 @@ def generate_airlock_docs(airlock_path: Path, files: list, session_id: str = "")
         files: 処理されたファイルリスト
         session_id: セッションID（オプション）
     """
-    # README.md
+    # ファイルリスト
+    file_list = "\n".join([f"- `data/{f.relative_path}`" for f in files[:20]])
+    if len(files) > 20:
+        file_list += f"\n- ... 他 {len(files) - 20} ファイル"
+
+    file_list_plain = "\n".join([f"- data/{f.relative_path}" for f in files[:20]])
+    if len(files) > 20:
+        file_list_plain += f"\n- ... 他 {len(files) - 20} ファイル"
+
+    # README.md（汎用・全ツール向け）
     readme_content = f"""# DataAirlock Workspace
 
-このディレクトリは DataAirlock によって生成されました。
+このディレクトリはDataAirlockによって生成された**セキュアな作業環境**です。
+個人情報は匿名化されており、安全にAIツールで分析できます。
 
-## 構造
+## ディレクトリ構造
 
 ```
 .airlock/
-├── data/           # 匿名化済みデータ（元と同じ構造）
-├── output/         # Claude Codeの出力先
-├── PROMPT.md       # 分析用プロンプト
+├── data/           # 匿名化済みデータ（AIに渡してOK）
+├── output/         # 分析結果の出力先
+├── CLAUDE.md       # Claude Code用設定
+├── SYSTEM_PROMPT.md # 汎用システムプロンプト
+├── PROMPT.md       # 分析依頼テンプレート
 └── README.md       # このファイル
 ```
 
-## ファイル一覧
+## 利用可能なファイル
 
-処理済みファイル数: {len(files)}
+{file_list}
+
+## 匿名化IDについて
+
+データ内の以下の形式は匿名化された個人情報です：
+
+| 形式 | 意味 | 例 |
+|------|------|-----|
+| `PERSON_001_XXXX` | 人名 | 山田太郎 → PERSON_001_A7K2 |
+| `PATIENT_001_XXXX` | 患者ID | P001 → PATIENT_001_A7K2 |
+| `PHONE_001_XXXX` | 電話番号 | 03-1234-5678 → PHONE_001_A7K2 |
+| `EMAIL_001_XXXX` | メール | test@example.com → EMAIL_001_A7K2 |
+| `ADDR_001_XXXX` | 住所 | 東京都新宿区... → ADDR_001_A7K2 |
+
+※ 末尾の4文字（例: A7K2）はセッションIDで、同一ファイル内で共通です。
+
+## ワークフロー
+
+1. **分析**: `data/` 内のファイルをAIツールで分析
+2. **出力**: 結果を `output/` に保存（匿名化IDはそのまま維持）
+3. **復元**: プロジェクトルートで `dataairlock` を実行し「結果を復元」を選択
 
 ## 注意事項
 
-- `data/` 内のファイルは個人情報が匿名化されています
-- 分析結果は `output/` に保存してください
-- 復元には元のパスワードが必要です
-- このディレクトリを .gitignore に追加することを推奨します
-
-## 復元方法
-
-```bash
-dataairlock  # TUIから「結果を復元」を選択
-```
+- 復元用マッピングは `../{AIRLOCK_MAPPINGS_DIR}/` に保存されています（Git除外済み）
+- このディレクトリ外のファイルにはアクセスしないでください
 
 生成日時: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 """
 
-    # PROMPT.md
-    file_list = "\n".join([f"- {f.relative_path}" for f in files[:20]])
-    if len(files) > 20:
-        file_list += f"\n- ... 他 {len(files) - 20} ファイル"
+    # CLAUDE.md（Claude Code用）
+    claude_content = f"""# DataAirlock セキュア環境
 
-    prompt_content = f"""# データ分析プロンプト
+このワークスペースには**匿名化された機密データ**が含まれています。
+以下のルールを厳守してください。
 
-## 利用可能なデータ
+## 絶対ルール
+
+### 禁止事項
+- **このディレクトリ外のファイルを読み込まない**（`../` へのアクセス禁止）
+- **匿名化IDから元の値を推測・復元しようとしない**
+- **匿名化IDを変更・削除しない**
+- **データを外部に送信しない**
+
+### 必須事項
+- 結果ファイルは必ず `output/` ディレクトリに保存する
+- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持する
+- 新しい列を追加する場合も、既存の匿名化ID列は保持する
+
+## 利用可能なファイル
+
+{file_list}
+
+## 匿名化IDの形式
+
+| プレフィックス | 意味 |
+|--------------|------|
+| `PERSON_` | 人名 |
+| `PATIENT_` | 患者ID |
+| `PHONE_` | 電話番号 |
+| `EMAIL_` | メールアドレス |
+| `ADDR_` | 住所 |
+| `BIRTHDATE_` | 生年月日 |
+| `AGE_` | 年齢 |
+| `MYNUMBER_` | マイナンバー |
+
+## 出力形式
+
+分析結果をCSVで出力する場合：
+```python
+df.to_csv("output/result.csv", index=False, encoding="utf-8-sig")
+```
+
+## 復元について
+
+匿名化IDの復元はこのワークスペース外で行われます。
+あなたは復元処理を行う必要はありません。
+"""
+
+    # SYSTEM_PROMPT.md（汎用LLMツール用）
+    system_prompt_content = f"""あなたはDataAirlockセキュア環境内で作業するAIアシスタントです。
+
+# 環境説明
+
+このディレクトリには匿名化された機密データが含まれています。
+個人情報は `PERSON_001_A7K2` のような形式で匿名化されています。
+
+# 厳守ルール
+
+1. このディレクトリ外のファイルを絶対に読み込まないでください
+2. 匿名化IDから元の値を推測しようとしないでください
+3. 結果は必ず output/ ディレクトリに保存してください
+4. 匿名化ID列は削除・変更せず、そのまま維持してください
+
+# 禁止コマンド例
+
+- `cat ../` や `ls ../` など親ディレクトリへのアクセス
+- `find /` など広範囲の検索
+- 外部へのデータ送信
+
+# 利用可能なファイル
+
+{file_list_plain}
+
+# 作業手順
+
+1. data/ 内のファイルを読み込む
+2. 分析・処理を行う
+3. 結果を output/ に保存する
+
+匿名化IDの復元は別途行われるため、あなたが行う必要はありません。
+"""
+
+    # PROMPT.md（分析依頼テンプレート）
+    prompt_content = f"""# 分析依頼
+
+## 対象データ
 
 以下のファイルが `data/` ディレクトリにあります:
 
 {file_list}
 
-## 注意事項
+## 依頼内容
 
-- データ内の個人情報は匿名化されています
-  - 例: `PERSON_001`, `EMAIL_001`, `PHONE_001` など
-- 分析結果は `output/` ディレクトリに保存してください
-- 匿名化IDを使って分析を行ってください
+[ここに具体的な分析依頼を記述してください]
 
-## 分析例
+例:
+- 基本統計量を算出してください
+- 年代別の傾向を分析してください
+- 異常値を検出してください
 
-```
-data/ 内のCSVファイルを読み込んで、基本統計を出力してください。
-結果は output/ に保存してください。
-```
+## 出力形式
 
-## 環境変数
+- 結果ファイル: `output/` ディレクトリに保存
+- 形式: CSV（UTF-8 BOM付き推奨）
 
-- `DATAAIRLOCK_DATA`: データディレクトリ
-- `DATAAIRLOCK_OUTPUT`: 出力ディレクトリ
+## 注意
+
+- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持してください
+- このディレクトリ外のファイルにはアクセスしないでください
 """
 
     # ファイル書き込み
     readme_path = airlock_path / "README.md"
+    claude_path = airlock_path / "CLAUDE.md"
+    system_prompt_path = airlock_path / "SYSTEM_PROMPT.md"
     prompt_path = airlock_path / "PROMPT.md"
 
     readme_path.write_text(readme_content, encoding="utf-8")
+    claude_path.write_text(claude_content, encoding="utf-8")
+    system_prompt_path.write_text(system_prompt_content, encoding="utf-8")
     prompt_path.write_text(prompt_content, encoding="utf-8")
 
 

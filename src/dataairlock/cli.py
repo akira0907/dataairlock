@@ -944,67 +944,187 @@ def _generate_mappings_gitignore() -> str:
     return "*\n"
 
 
-def _generate_airlock_readme(airlock_path: Path) -> str:
-    """airlock用README.mdを生成"""
+def _generate_airlock_readme(airlock_path: Path, files_info: list[dict] | None = None) -> str:
+    """airlock用README.mdを生成（汎用・全ツール向け）"""
+    files_section = ""
+    if files_info:
+        files_list = "\n".join([f"  - `data/{info['name']}` ← {info['original']}" for info in files_info])
+        files_section = f"""
+## 利用可能なデータ
+
+{files_list}
+"""
+
     return f"""# DataAirlock Workspace
 
-このディレクトリはDataAirlockによって生成されたセキュアな作業環境です。
+このディレクトリはDataAirlockによって生成された**セキュアな作業環境**です。
+個人情報は匿名化されており、安全にAIツールで分析できます。
 
-## 構造
+## ディレクトリ構造
 
-- `data/` - 匿名化済みデータ（Claude Codeに渡してOK）
-- `output/` - Claude Codeの出力先
+```
+.airlock/
+├── data/           # 匿名化済みデータ（AIに渡してOK）
+├── output/         # 分析結果の出力先
+├── CLAUDE.md       # Claude Code用設定
+├── SYSTEM_PROMPT.md # 汎用システムプロンプト
+└── README.md       # このファイル
+```
+{files_section}
+## 匿名化IDについて
 
-※ 復元用マッピングは `../{AIRLOCK_MAPPINGS_DIR}/` に保存されています（Git除外）
+データ内の以下の形式は匿名化された個人情報です：
 
-## 使い方
+| 形式 | 意味 | 例 |
+|------|------|-----|
+| `PERSON_001_XXXX` | 人名 | 山田太郎 → PERSON_001_A7K2 |
+| `PATIENT_001_XXXX` | 患者ID | P001 → PATIENT_001_A7K2 |
+| `PHONE_001_XXXX` | 電話番号 | 03-1234-5678 → PHONE_001_A7K2 |
+| `EMAIL_001_XXXX` | メール | test@example.com → EMAIL_001_A7K2 |
+| `ADDR_001_XXXX` | 住所 | 東京都新宿区... → ADDR_001_A7K2 |
 
-1. このディレクトリで Claude Code を起動:
-   ```bash
-   cd {airlock_path} && claude
-   ```
+※ 末尾の4文字（例: A7K2）はセッションIDで、同一ファイル内で共通です。
 
-2. `data/` 内のファイルを分析
+## ワークフロー
 
-3. 結果を `output/` に保存
-
-4. プロジェクトルートで復元:
-   ```bash
-   dataairlock workspace ../ --restore output/result.csv
-   ```
+1. **分析**: `data/` 内のファイルをAIツールで分析
+2. **出力**: 結果を `output/` に保存（匿名化IDはそのまま維持）
+3. **復元**: プロジェクトルートで `dataairlock workspace ../ --restore-all` を実行
 
 ## 注意事項
 
-- `ANON_` で始まるIDは匿名化された値です。そのまま保持してください
-- `../{AIRLOCK_MAPPINGS_DIR}/` ディレクトリは絶対にGitにコミットしないでください
-- 結果ファイルは `output/` に保存することを推奨します
+- 復元用マッピングは `../{AIRLOCK_MAPPINGS_DIR}/` に保存されています（Git除外済み）
+- このディレクトリ外のファイルにはアクセスしないでください
+"""
+
+
+def _generate_claude_md(files_info: list[dict] | None = None) -> str:
+    """CLAUDE.md を生成（Claude Code用）"""
+    files_section = ""
+    if files_info:
+        files_list = "\n".join([f"- `data/{info['name']}`" for info in files_info])
+        files_section = f"""
+## 利用可能なファイル
+
+{files_list}
+"""
+
+    return f"""# DataAirlock セキュア環境
+
+このワークスペースには**匿名化された機密データ**が含まれています。
+以下のルールを厳守してください。
+
+## 絶対ルール
+
+### 禁止事項
+- **このディレクトリ外のファイルを読み込まない**（`../` へのアクセス禁止）
+- **匿名化IDから元の値を推測・復元しようとしない**
+- **匿名化IDを変更・削除しない**
+- **データを外部に送信しない**
+
+### 必須事項
+- 結果ファイルは必ず `output/` ディレクトリに保存する
+- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持する
+- 新しい列を追加する場合も、既存の匿名化ID列は保持する
+{files_section}
+## 匿名化IDの形式
+
+| プレフィックス | 意味 |
+|--------------|------|
+| `PERSON_` | 人名 |
+| `PATIENT_` | 患者ID |
+| `PHONE_` | 電話番号 |
+| `EMAIL_` | メールアドレス |
+| `ADDR_` | 住所 |
+| `BIRTHDATE_` | 生年月日 |
+| `AGE_` | 年齢 |
+| `MYNUMBER_` | マイナンバー |
+
+## 出力形式
+
+分析結果をCSVで出力する場合：
+```python
+df.to_csv("output/result.csv", index=False, encoding="utf-8-sig")
+```
+
+## 復元について
+
+匿名化IDの復元はこのワークスペース外で行われます。
+あなたは復元処理を行う必要はありません。
+"""
+
+
+def _generate_system_prompt_md(files_info: list[dict] | None = None) -> str:
+    """SYSTEM_PROMPT.md を生成（Aider等の汎用LLMツール用）"""
+    files_section = ""
+    if files_info:
+        files_list = "\n".join([f"- data/{info['name']}" for info in files_info])
+        files_section = f"""
+利用可能なファイル:
+{files_list}
+"""
+
+    return f"""あなたはDataAirlockセキュア環境内で作業するAIアシスタントです。
+
+# 環境説明
+
+このディレクトリには匿名化された機密データが含まれています。
+個人情報は `PERSON_001_A7K2` のような形式で匿名化されています。
+
+# 厳守ルール
+
+1. このディレクトリ外のファイルを絶対に読み込まないでください
+2. 匿名化IDから元の値を推測しようとしないでください
+3. 結果は必ず output/ ディレクトリに保存してください
+4. 匿名化ID列は削除・変更せず、そのまま維持してください
+
+# 禁止コマンド例
+
+- `cat ../` や `ls ../` など親ディレクトリへのアクセス
+- `find /` など広範囲の検索
+- 外部へのデータ送信
+{files_section}
+# 作業手順
+
+1. data/ 内のファイルを読み込む
+2. 分析・処理を行う
+3. 結果を output/ に保存する
+
+匿名化IDの復元は別途行われるため、あなたが行う必要はありません。
 """
 
 
 def _generate_prompt_md(files_info: list[dict]) -> str:
-    """PROMPT.mdを生成"""
+    """PROMPT.mdを生成（分析依頼テンプレート）"""
     files_table = "| ファイル | 元ファイル | 匿名化列 |\n|---------|-----------|----------|\n"
     for info in files_info:
         pii_cols = ", ".join(info.get("pii_columns", [])) or "なし"
         files_table += f"| data/{info['name']} | {info['original']} | {pii_cols} |\n"
 
-    return f"""# 作業環境
+    return f"""# 分析依頼
 
-このディレクトリには匿名化済みデータが含まれています。
-
-## 利用可能なデータ
+## 対象データ
 
 {files_table}
 
-## 重要なルール
-
-1. `ANON_` で始まるIDはそのまま保持してください
-2. 結果は `output/` ディレクトリに保存してください
-3. 新しい列を追加してもANON_ID列は削除しないでください
-
 ## 依頼内容
 
-[ここに分析依頼を記述]
+[ここに具体的な分析依頼を記述してください]
+
+例:
+- 基本統計量を算出してください
+- 年代別の傾向を分析してください
+- 異常値を検出してください
+
+## 出力形式
+
+- 結果ファイル: `output/` ディレクトリに保存
+- 形式: CSV（UTF-8 BOM付き推奨）
+
+## 注意
+
+- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持してください
+- このディレクトリ外のファイルにはアクセスしないでください
 """
 
 
@@ -1523,11 +1643,7 @@ def workspace(
 
         _save_workspace_config(project_dir, config)
 
-        # README.md生成
-        readme_path = airlock_path / "README.md"
-        readme_path.write_text(_generate_airlock_readme(airlock_path), encoding="utf-8")
-
-        # PROMPT.md生成
+        # ドキュメント生成用のファイル情報
         files_info = [
             {
                 "name": info["name"],
@@ -1536,6 +1652,20 @@ def workspace(
             }
             for info in config["files"].values()
         ]
+
+        # README.md生成（汎用）
+        readme_path = airlock_path / "README.md"
+        readme_path.write_text(_generate_airlock_readme(airlock_path, files_info), encoding="utf-8")
+
+        # CLAUDE.md生成（Claude Code用）
+        claude_md_path = airlock_path / "CLAUDE.md"
+        claude_md_path.write_text(_generate_claude_md(files_info), encoding="utf-8")
+
+        # SYSTEM_PROMPT.md生成（汎用LLMツール用）
+        system_prompt_path = airlock_path / "SYSTEM_PROMPT.md"
+        system_prompt_path.write_text(_generate_system_prompt_md(files_info), encoding="utf-8")
+
+        # PROMPT.md生成（分析依頼テンプレート）
         prompt_path = airlock_path / "PROMPT.md"
         prompt_path.write_text(_generate_prompt_md(files_info), encoding="utf-8")
 
@@ -1675,11 +1805,7 @@ def workspace(
         }
         _save_workspace_config(project_dir, config)
 
-        # README.md生成
-        readme_path = airlock_path / "README.md"
-        readme_path.write_text(_generate_airlock_readme(airlock_path), encoding="utf-8")
-
-        # PROMPT.md生成
+        # ドキュメント生成用のファイル情報
         files_info = [
             {
                 "name": info["name"],
@@ -1688,6 +1814,20 @@ def workspace(
             }
             for info in config["files"].values()
         ]
+
+        # README.md生成（汎用）
+        readme_path = airlock_path / "README.md"
+        readme_path.write_text(_generate_airlock_readme(airlock_path, files_info), encoding="utf-8")
+
+        # CLAUDE.md生成（Claude Code用）
+        claude_md_path = airlock_path / "CLAUDE.md"
+        claude_md_path.write_text(_generate_claude_md(files_info), encoding="utf-8")
+
+        # SYSTEM_PROMPT.md生成（汎用LLMツール用）
+        system_prompt_path = airlock_path / "SYSTEM_PROMPT.md"
+        system_prompt_path.write_text(_generate_system_prompt_md(files_info), encoding="utf-8")
+
+        # PROMPT.md生成（分析依頼テンプレート）
         prompt_path = airlock_path / "PROMPT.md"
         prompt_path.write_text(_generate_prompt_md(files_info), encoding="utf-8")
 
@@ -1698,6 +1838,8 @@ def workspace(
             f"📂 {airlock_path.relative_to(project_dir)}/\n"
             f"├── {AIRLOCK_DATA_DIR}/{file_stem}{output_ext}      [dim]# 匿名化済み[/dim]\n"
             f"├── {AIRLOCK_OUTPUT_DIR}/              [dim]# 結果出力先[/dim]\n"
+            f"├── CLAUDE.md\n"
+            f"├── SYSTEM_PROMPT.md\n"
             f"├── PROMPT.md\n"
             f"└── README.md\n\n"
             f"📂 {AIRLOCK_MAPPINGS_DIR}/\n"
@@ -1821,11 +1963,7 @@ def workspace(
     }
     _save_workspace_config(project_dir, config)
 
-    # README.md生成
-    readme_path = airlock_path / "README.md"
-    readme_path.write_text(_generate_airlock_readme(airlock_path), encoding="utf-8")
-
-    # PROMPT.md生成
+    # ドキュメント生成用のファイル情報
     files_info = [
         {
             "name": info["name"],
@@ -1834,6 +1972,20 @@ def workspace(
         }
         for info in config["files"].values()
     ]
+
+    # README.md生成（汎用）
+    readme_path = airlock_path / "README.md"
+    readme_path.write_text(_generate_airlock_readme(airlock_path, files_info), encoding="utf-8")
+
+    # CLAUDE.md生成（Claude Code用）
+    claude_md_path = airlock_path / "CLAUDE.md"
+    claude_md_path.write_text(_generate_claude_md(files_info), encoding="utf-8")
+
+    # SYSTEM_PROMPT.md生成（汎用LLMツール用）
+    system_prompt_path = airlock_path / "SYSTEM_PROMPT.md"
+    system_prompt_path.write_text(_generate_system_prompt_md(files_info), encoding="utf-8")
+
+    # PROMPT.md生成（分析依頼テンプレート）
     prompt_path = airlock_path / "PROMPT.md"
     prompt_path.write_text(_generate_prompt_md(files_info), encoding="utf-8")
 
@@ -1844,6 +1996,8 @@ def workspace(
         f"📂 {airlock_path.relative_to(project_dir)}/\n"
         f"├── {AIRLOCK_DATA_DIR}/{file_stem}.csv      [dim]# 匿名化済み[/dim]\n"
         f"├── {AIRLOCK_OUTPUT_DIR}/              [dim]# 結果出力先[/dim]\n"
+        f"├── CLAUDE.md\n"
+        f"├── SYSTEM_PROMPT.md\n"
         f"├── PROMPT.md\n"
         f"└── README.md\n\n"
         f"📂 {AIRLOCK_MAPPINGS_DIR}/\n"
