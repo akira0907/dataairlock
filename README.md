@@ -1,6 +1,7 @@
 # DataAirlock
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+[![PyPI version](https://img.shields.io/pypi/v/dataairlock)](https://pypi.org/project/dataairlock/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/dataairlock/)
 ![License](https://img.shields.io/badge/license-AGPL%20v3.0-green)
 ![Security](https://img.shields.io/badge/security-local--only-brightgreen)
 ![Status](https://img.shields.io/badge/status-beta-orange)
@@ -63,19 +64,21 @@ flowchart LR
 ### インストール
 
 ```bash
-# GitHubからインストール（現在は開発版）
-pip install git+https://github.com/akira0907/dataairlock.git
-
-# 最新版に強制アップデート
-pip install --force-reinstall git+https://github.com/akira0907/dataairlock.git
-
-# または、ローカルでクローンしてインストール
-git clone https://github.com/akira0907/dataairlock.git
-cd dataairlock
-pip install -e .
+pip install dataairlock
 ```
 
-> 将来的には `pip install dataairlock` で簡単にインストールできるようになる予定です。
+オプション機能を含める場合：
+
+```bash
+# LLM検出機能（Ollama連携）
+pip install dataairlock[ollama]
+
+# Web UI（Streamlit）
+pip install dataairlock[streamlit]
+
+# すべての機能
+pip install dataairlock[all]
+```
 
 ### 基本的な使い方
 
