@@ -93,16 +93,6 @@ flowchart LR
 
 ---
 
-## Who Uses DataAirlock
-
-| Sector | Use Case |
-|--------|----------|
-| **Healthcare** | Process clinical notes, discharge summaries, and patient communications through LLMs without exposing PHI |
-| **Research** | Analyze survey responses, interview transcripts, and study data while maintaining participant confidentiality |
-| **Enterprise** | Summarize internal documents, customer feedback, and HR records without leaking sensitive information |
-
----
-
 ## Quick Start
 
 ### Installation
