@@ -1,12 +1,18 @@
-# DataAirlock
+<p align="center">
+  <img src="assets/logo.png" alt="DataAirlock Logo" width="300">
+</p>
 
-[![PyPI version](https://img.shields.io/pypi/v/dataairlock)](https://pypi.org/project/dataairlock/)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/dataairlock/)
-![License](https://img.shields.io/badge/license-AGPL%20v3.0-green)
-![Security](https://img.shields.io/badge/security-local--only-brightgreen)
-![Status](https://img.shields.io/badge/status-beta-orange)
+<h1 align="center">DataAirlock</h1>
 
-**A local tool for safely sharing sensitive data with cloud LLMs**
+<p align="center">
+  <a href="https://pypi.org/project/dataairlock/"><img src="https://img.shields.io/pypi/v/dataairlock" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/dataairlock/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
+  <img src="https://img.shields.io/badge/license-AGPL%20v3.0-green" alt="License">
+  <img src="https://img.shields.io/badge/security-local--only-brightgreen" alt="Security">
+  <img src="https://img.shields.io/badge/status-beta-orange" alt="Status">
+</p>
+
+<p align="center"><strong>A local tool for safely sharing sensitive data with cloud LLMs</strong></p>
 
 DataAirlock anonymizes personally identifiable information (PII) locally before sending data to cloud LLMs like Claude Code or Codex. Results can be restored to original data locally.
 
