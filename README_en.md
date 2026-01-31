@@ -12,25 +12,37 @@
   <img src="https://img.shields.io/badge/status-beta-orange" alt="Status">
 </p>
 
-<p align="center"><strong>A local tool for safely sharing sensitive data with cloud LLMs</strong></p>
-
-DataAirlock anonymizes personally identifiable information (PII) locally before sending data to cloud LLMs like Claude Code or Codex. Results can be restored to original data locally.
+<p align="center"><strong>A local pseudonymization pipeline for safe LLM usage</strong></p>
 
 [日本語ドキュメント](./README.md) | [Report Issues](https://github.com/akira0907/dataairlock/issues)
 
+---
+
+## The Problem
+
+**You cannot send sensitive data to LLMs.**
+
+Hospitals, research labs, and enterprises hold valuable data—patient records, research datasets, internal documents—but cloud-based LLMs like ChatGPT and Claude are off-limits for this data. Privacy regulations (GDPR, HIPAA) and internal policies prohibit sending personally identifiable information (PII) to external services.
+
+**DataAirlock solves this by pseudonymizing data locally before LLM use.**
+
+PII is replaced with reversible semantic tokens (e.g., `PERSON_001`, `PATIENT_042`). An encrypted mapping is stored on your machine. After LLM processing, results are restored to original values—all without sensitive data ever leaving your environment.
+
+---
+
 ## Disclaimer
 
-> **This tool does not guarantee 100% detection or anonymization of personal information.**
+> **This tool does not guarantee 100% detection or pseudonymization of personal information.**
 > Users must verify output data themselves.
 > The developers are not responsible for any data leaks or damages resulting from use of this tool.
 
-## Concept
+## How It Works
 
 ```mermaid
 flowchart LR
     subgraph Local["Local Environment (Your PC)"]
-        A[("Sensitive Data<br/>John Doe, 555-1234")] --> B["DataAirlock<br/>Anonymize"]
-        B --> C[("Anonymized Data<br/>PERSON_001, PHONE_001")]
+        A[("Sensitive Data<br/>John Doe, 555-1234")] --> B["DataAirlock<br/>Pseudonymize"]
+        B --> C[("Pseudonymized Data<br/>PERSON_001, PHONE_001")]
         F["DataAirlock<br/>Restore"] --> G[("Restored Results<br/>John Doe, 555-1234")]
     end
 
@@ -49,21 +61,22 @@ flowchart LR
     style D fill:#e0e0ff,stroke:#0000cc
 ```
 
-## Features
+## Key Features
 
-- **CLI Tool** - Works entirely in terminal, seamlessly integrates with Claude Code and other CLI tools
-- **Local Processing** - All anonymization and restoration happens locally; raw data never leaves your machine
-- **Semantic IDs** - Meaningful IDs like `PATIENT_001` help LLMs understand context
-- **Restorable** - Restore analysis results to original data with one command
+- **Local Processing** — All pseudonymization and restoration happens on your machine. Raw data never leaves your environment.
+- **Semantic Tokens** — Meaningful IDs like `PATIENT_001` preserve context for LLM understanding.
+- **Reversible** — Restore analysis results to original data with one command.
+- **CLI-First** — Integrates seamlessly with Claude Code, Codex, and other CLI tools.
+- **Multi-Format** — Supports CSV, Excel, Word, and PowerPoint.
 
 ## Why DataAirlock?
 
-| Problem | DataAirlock Solution |
-|---------|---------------------|
-| Can't send sensitive data to cloud | Anonymize locally before sending |
-| Anonymized IDs are meaningless | Semantic IDs (PATIENT_001, etc.) help LLMs understand context |
-| Manual restoration is tedious | One-command automatic restoration |
-| Can't anonymize Word/PPT | Supports CSV, Excel, Word, PowerPoint |
+| Challenge | Solution |
+|-----------|----------|
+| Can't send sensitive data to cloud LLMs | Pseudonymize locally, then send safely |
+| Random IDs confuse LLMs | Semantic tokens preserve context |
+| Manual restoration is error-prone | One-command automatic restoration |
+| Documents contain embedded PII | Full support for Word and PowerPoint |
 
 ## Quick Start
 
@@ -76,7 +89,7 @@ pip install dataairlock
 With optional features:
 
 ```bash
-# LLM detection (Ollama integration)
+# LLM-enhanced detection (Ollama integration)
 pip install dataairlock[ollama]
 
 # Web UI (Streamlit)
@@ -89,10 +102,10 @@ pip install dataairlock[all]
 ### Basic Usage
 
 ```bash
-# 1. Create workspace (anonymize files)
+# 1. Create workspace (pseudonymize files)
 dataairlock workspace ./my_project --add data/patients.csv -p mypassword
 
-# 2. Launch Claude Code (work with anonymized data)
+# 2. Launch Claude Code (work with pseudonymized data)
 dataairlock wrap ./my_project --shell
 # or
 cd ./my_project/.airlock && claude
@@ -116,8 +129,8 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 
 ## Supported PII Types
 
-| PII Type | Anonymized Format | Example |
-|----------|------------------|---------|
+| PII Type | Pseudonymized Format | Example |
+|----------|---------------------|---------|
 | Patient ID | PATIENT_001 | P001 → PATIENT_001 |
 | Name | PERSON_001 | John Doe → PERSON_001 |
 | Phone Number | PHONE_001 | 555-123-4567 → PHONE_001 |
@@ -130,18 +143,18 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 
 | Command | Description |
 |---------|-------------|
-| `workspace --add` | Anonymize and add file to workspace |
+| `workspace --add` | Pseudonymize and add file to workspace |
 | `workspace --add-all` | Batch add all files in folder |
 | `workspace --status` | Show workspace status |
 | `workspace --restore` | Restore result file |
 | `workspace --restore-all` | Batch restore all CSVs in output/ |
-| `wrap` | Execute command in anonymized environment |
+| `wrap` | Execute command in pseudonymized environment |
 | `chat` | Chat with local LLM (Ollama) |
-| `scan` | Detect PII only (no anonymization) |
-| `anonymize` | Anonymize single file |
+| `scan` | Detect PII only (no pseudonymization) |
+| `pseudonymize` | Pseudonymize single file |
 | `restore` | Restore single file |
 | `scan-doc` | Detect PII in Word/PPT |
-| `anonymize-doc` | Anonymize Word/PPT |
+| `pseudonymize-doc` | Pseudonymize Word/PPT |
 | `restore-doc` | Restore Word/PPT |
 | `profile list` | List saved profiles |
 | `profile show` | Show profile details |
@@ -150,21 +163,21 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `profile import` | Import profile from JSON |
 | `profile create-default` | Create default profile |
 
-## Anonymization Strategies
+## Pseudonymization Strategies
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
-| `replace` | Replace with semantic ID (restorable) | Names, patient IDs, phone numbers |
-| `generalize` | Generalize (decade, prefecture, etc.) | Birth date → decade, address → prefecture |
-| `delete` | Delete entire column | Unnecessary PII columns |
+| `replace` | Replace with semantic token (reversible) | Names, patient IDs, phone numbers |
+| `generalize` | Generalize to category (decade, region) | Birth date → decade, address → region |
+| `delete` | Remove entire column | Unnecessary PII columns |
 
 ## PII Detection Modes
 
 DataAirlock supports three detection modes:
 
-| Mode | Description | Features |
-|------|-------------|----------|
-| `rule` | Rule-based (regex) | Fast, works offline, default |
+| Mode | Description | Characteristics |
+|------|-------------|-----------------|
+| `rule` | Rule-based (regex) | Fast, offline, default |
 | `llm` | LLM (Ollama) only | High accuracy, detects ambiguous PII |
 | `hybrid` | Rule + LLM combined | Best accuracy, recommended |
 
@@ -180,8 +193,8 @@ dataairlock scan data.csv -m llm
 # Hybrid mode (recommended)
 dataairlock scan data.csv -m hybrid
 
-# Also available for anonymize
-dataairlock anonymize data.csv -m hybrid -p mypassword
+# Also available for pseudonymize
+dataairlock pseudonymize data.csv -m hybrid -p mypassword
 ```
 
 ### TUI Usage
@@ -217,12 +230,12 @@ Detection accuracy on built-in test data (11 columns: 5 clear PII + 2 ambiguous 
 | `llm` | 1.000 | 0.429 | 0.600 | 15.6s |
 | `hybrid` | 1.000 | **0.857** | **0.923** | 10.1s |
 
-**Hybrid mode improves F1 score by +10.8% compared to rule-only**, successfully detecting ambiguous PII like the "担当者" (person in charge) column containing names like "営業部 山本".
+**Hybrid mode improves F1 score by +10.8% compared to rule-only**, successfully detecting ambiguous PII in columns containing names embedded in text.
 
 ## Profile Feature
 
-Save PII processing settings as profiles to reuse in future work.
-This eliminates repetitive configuration for routine tasks (e.g., monthly patient data processing).
+Save PII processing settings as profiles to reuse across projects.
+Eliminates repetitive configuration for routine tasks (e.g., monthly patient data processing).
 
 ### TUI Usage
 
@@ -266,7 +279,7 @@ dataairlock profile import ./medical_profile.json
 ```
 my_project/
 ├── .airlock/                    # Workspace (Git-safe)
-│   ├── data/                    # Anonymized data
+│   ├── data/                    # Pseudonymized data
 │   │   └── patients.csv         # PATIENT_001, PERSON_001...
 │   ├── output/                  # LLM output directory
 │   ├── PROMPT.md                # LLM prompt template
@@ -279,15 +292,15 @@ my_project/
 
 ## Security
 
-- **Encrypted Mapping Files**: Encrypted with Fernet (AES-128-CBC)
-- **Password Required**: Password needed for restoration
-- **Local Processing (No Data Exfiltration)**: **All anonymization and restoration is performed locally. Raw data is never sent to the cloud.**
-- **Git Exclusion**: `.airlock_mappings/` is automatically added to `.gitignore`
+- **Encrypted Mappings** — Mapping files are encrypted with Fernet (AES-128-CBC)
+- **Password Protected** — Restoration requires the original password
+- **Local-Only Processing** — All pseudonymization and restoration runs locally. Sensitive data never leaves your machine.
+- **Git-Safe by Default** — `.airlock_mappings/` is automatically added to `.gitignore`
 
 ## Requirements
 
 - Python 3.10+
-- Ollama (only for chat command)
+- Ollama (only for LLM-enhanced detection and chat)
 
 ## Development
 

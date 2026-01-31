@@ -12,25 +12,37 @@
   <img src="https://img.shields.io/badge/status-beta-orange" alt="Status">
 </p>
 
-<p align="center"><strong>機密データを安全にクラウドLLMへ渡すためのローカルツール</strong></p>
-
-DataAirlockは、個人情報を含むデータをローカル環境で匿名化し、Claude Code や Codex などのクラウドLLMで安全に分析するためのCLIツールです。処理結果はローカルで元のデータ（実名）に復元できます。
+<p align="center"><strong>LLM利用のためのローカル仮名化パイプライン</strong></p>
 
 [English Documentation](./README_en.md) | [不具合報告](https://github.com/akira0907/dataairlock/issues)
 
+---
+
+## 課題
+
+**機密データをLLMに送信することはできません。**
+
+医療機関、研究機関、企業には、患者記録、研究データセット、社内文書など、価値あるデータが蓄積されています。しかし、ChatGPTやClaudeなどのクラウドLLMにこれらのデータを送ることは許されません。GDPR、個人情報保護法などの規制や、組織内のセキュリティポリシーにより、個人情報（PII）を外部サービスに送信することは禁止されています。
+
+**DataAirlockは、LLM利用前にデータをローカルで仮名化（pseudonymization）することで、この課題を解決します。**
+
+個人情報は可逆的なセマンティックトークン（例：`PERSON_001`、`PATIENT_042`）に置換されます。暗号化されたマッピングはお使いのマシンに保存されます。LLM処理後、結果は元の値に復元されます。機密データが外部に送信されることは一切ありません。
+
+---
+
 ## 免責事項
 
-> **本ツールは個人情報の検出・匿名化を100%保証するものではありません。**
+> **本ツールは個人情報の検出・仮名化を100%保証するものではありません。**
 > 出力データは必ずユーザー自身の目で確認してください。
 > 開発者は本ツール使用によるデータの漏洩や損害について一切の責任を負いません。
 
-## 概念図
+## 仕組み
 
 ```mermaid
 flowchart LR
     subgraph Local["ローカル環境（あなたのPC）"]
-        A[("機密データ<br/>山田太郎, 090-1234-5678")] --> B["DataAirlock<br/>匿名化"]
-        B --> C[("匿名化データ<br/>PERSON_001, PHONE_001")]
+        A[("機密データ<br/>山田太郎, 090-1234-5678")] --> B["DataAirlock<br/>仮名化"]
+        B --> C[("仮名化データ<br/>PERSON_001, PHONE_001")]
         F["DataAirlock<br/>復元"] --> G[("復元済み結果<br/>山田太郎, 090-1234-5678")]
     end
 
@@ -49,21 +61,22 @@ flowchart LR
     style D fill:#e0e0ff,stroke:#0000cc
 ```
 
-## 特徴
+## 主な機能
 
-- **CLIツール** - ターミナルで完結、Claude Code や他のCLIツールとシームレスに連携
-- **ローカル完結** - 匿名化・復元はすべてローカルで実行、クラウドに生データを送らない
-- **セマンティックID** - `PATIENT_001` 等の意味のあるIDでLLMが文脈を理解
-- **復元可能** - 分析結果をワンコマンドで元のデータに復元
+- **ローカル完結** — 仮名化・復元はすべてお使いのマシン上で実行。生データが外部に送信されることはありません。
+- **セマンティックトークン** — `PATIENT_001`等の意味のあるIDにより、LLMが文脈を正確に理解。
+- **可逆性** — 分析結果をワンコマンドで元のデータに復元。
+- **CLI対応** — Claude Code、Codex、その他のCLIツールとシームレスに連携。
+- **複数フォーマット対応** — CSV、Excel、Word、PowerPointに対応。
 
-## なぜ DataAirlock？
+## DataAirlockを選ぶ理由
 
-| 課題 | DataAirlockの解決策 |
-|------|---------------------|
-| 機密データをクラウドに送れない | ローカルで匿名化してから送信 |
-| 匿名化IDが意味不明 | セマンティックID（PATIENT_001等）でLLMが文脈を理解 |
-| 結果を手動で復元するのが面倒 | ワンコマンドで自動復元 |
-| Word/PPTは匿名化できない | CSV, Excel, Word, PowerPoint に対応 |
+| 課題 | ソリューション |
+|------|----------------|
+| 機密データをクラウドLLMに送れない | ローカルで仮名化してから安全に送信 |
+| ランダムなIDではLLMが混乱する | セマンティックトークンで文脈を保持 |
+| 手動復元はミスが発生しやすい | ワンコマンドで自動復元 |
+| ドキュメント内の個人情報も保護が必要 | Word、PowerPointにも完全対応 |
 
 ## クイックスタート
 
@@ -89,10 +102,10 @@ pip install dataairlock[all]
 ### 基本的な使い方
 
 ```bash
-# 1. ワークスペースを作成（ファイルを匿名化）
+# 1. ワークスペースを作成（ファイルを仮名化）
 dataairlock workspace ./my_project --add data/patients.csv -p mypassword
 
-# 2. Claude Code を起動（匿名化データで作業）
+# 2. Claude Code を起動（仮名化データで作業）
 dataairlock wrap ./my_project --shell
 # または
 cd ./my_project/.airlock && claude
@@ -116,7 +129,7 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 
 ## 対応する個人情報（PII）
 
-| PIIタイプ | 匿名化後の形式 | 例 |
+| PIIタイプ | 仮名化後の形式 | 例 |
 |-----------|---------------|-----|
 | 患者ID / カルテ番号 | PATIENT_001 | P001 → PATIENT_001 |
 | 氏名（漢字） | PERSON_001 | 山田太郎 → PERSON_001 |
@@ -132,18 +145,18 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 
 | コマンド | 説明 |
 |----------|------|
-| `workspace --add` | ファイルを匿名化してワークスペースに追加 |
+| `workspace --add` | ファイルを仮名化してワークスペースに追加 |
 | `workspace --add-all` | フォルダ内の全ファイルを一括追加 |
 | `workspace --status` | ワークスペースの状態を表示 |
 | `workspace --restore` | 結果ファイルを復元 |
 | `workspace --restore-all` | output/内の全CSVを一括復元 |
-| `wrap` | 匿名化環境内でコマンドを実行 |
+| `wrap` | 仮名化環境内でコマンドを実行 |
 | `chat` | ローカルLLM（Ollama）で対話 |
-| `scan` | PII検出のみ（匿名化しない） |
-| `anonymize` | 単発ファイルの匿名化 |
+| `scan` | PII検出のみ（仮名化しない） |
+| `pseudonymize` | 単発ファイルの仮名化 |
 | `restore` | 単発ファイルの復元 |
 | `scan-doc` | Word/PPTのPII検出 |
-| `anonymize-doc` | Word/PPTの匿名化 |
+| `pseudonymize-doc` | Word/PPTの仮名化 |
 | `restore-doc` | Word/PPTの復元 |
 | `profile list` | 保存されたプロファイル一覧 |
 | `profile show` | プロファイルの詳細表示 |
@@ -152,11 +165,11 @@ dataairlock wrap ./my_project -c "python analyze.py" --auto-restore -p mypasswor
 | `profile import` | JSONからプロファイルをインポート |
 | `profile create-default` | デフォルトプロファイルを作成 |
 
-## 匿名化戦略
+## 仮名化戦略
 
 | 戦略 | 説明 | 使用例 |
 |------|------|--------|
-| `replace` | セマンティックIDに置換（復元可能） | 氏名、患者ID、電話番号 |
+| `replace` | セマンティックトークンに置換（復元可能） | 氏名、患者ID、電話番号 |
 | `generalize` | 一般化（年代、都道府県等） | 生年月日→年代、住所→都道府県 |
 | `delete` | 列ごと削除 | 不要な個人情報列 |
 
@@ -182,8 +195,8 @@ dataairlock scan data.csv -m llm
 # ハイブリッドモード（推奨）
 dataairlock scan data.csv -m hybrid
 
-# 匿名化時も指定可能
-dataairlock anonymize data.csv -m hybrid -p mypassword
+# 仮名化時も指定可能
+dataairlock pseudonymize data.csv -m hybrid -p mypassword
 ```
 
 ### TUIでの使用
@@ -223,8 +236,8 @@ ollama pull llama3.1:8b
 
 ## プロファイル機能
 
-PII処理設定をプロファイルとして保存し、次回以降の作業で再利用できます。
-定型業務（例: 毎月の患者データ処理）で同じ設定を繰り返し入力する手間を省けます。
+PII処理設定をプロファイルとして保存し、プロジェクト間で再利用できます。
+定型業務（例：毎月の患者データ処理）で同じ設定を繰り返し入力する手間を省けます。
 
 ### TUIでの使用
 
@@ -268,7 +281,7 @@ dataairlock profile import ./medical_profile.json
 ```
 my_project/
 ├── .airlock/                    # ワークスペース（Git管理OK）
-│   ├── data/                    # 匿名化済みデータ
+│   ├── data/                    # 仮名化済みデータ
 │   │   └── patients.csv         # PATIENT_001, PERSON_001...
 │   ├── output/                  # LLMの出力先
 │   ├── PROMPT.md                # LLM用プロンプトテンプレート
@@ -281,15 +294,15 @@ my_project/
 
 ## セキュリティ
 
-- **マッピングファイルは暗号化**: Fernet（AES-128-CBC）で暗号化
-- **パスワード必須**: 復元にはパスワードが必要
-- **ローカル処理（No Data Exfiltration）**: **匿名化・復元はすべてローカルで実行。生データがクラウドに送信されることはありません。**
-- **Git除外推奨**: `.airlock_mappings/` は `.gitignore` に自動追加
+- **暗号化されたマッピング** — マッピングファイルはFernet（AES-128-CBC）で暗号化
+- **パスワード保護** — 復元には元のパスワードが必要
+- **ローカル完結処理** — 仮名化・復元はすべてローカルで実行。機密データが外部に送信されることはありません。
+- **Gitセーフ設計** — `.airlock_mappings/` は `.gitignore` に自動追加
 
 ## 必要条件
 
 - Python 3.10+
-- Ollama（chatコマンドを使う場合のみ）
+- Ollama（LLM検出機能およびchatコマンドを使う場合のみ）
 
 ## 開発
 
