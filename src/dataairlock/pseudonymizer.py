@@ -1,4 +1,4 @@
-"""データ匿名化ロジック"""
+"""データ仮名化ロジック"""
 
 import base64
 import hashlib
@@ -26,21 +26,21 @@ def generate_session_id(length: int = 4) -> str:
     return ''.join(random.choices(chars, k=length))
 
 
-# 匿名化パターン検出用（衝突チェック用）
+# 仮名化パターン検出用（衝突チェック用）
 ANON_PATTERN = re.compile(
     r'^(PATIENT|PERSON|PERSON_KANA|PHONE|EMAIL|ADDR|BIRTHDATE|AGE|MYNUMBER|ID)_\d{3}'
 )
 
 
 def check_collision(df: pd.DataFrame) -> list[str]:
-    """元データに匿名化パターンと似た値が存在するかチェック"""
+    """元データに仮名化パターンと似た値が存在するかチェック"""
     warnings = []
     for col in df.columns:
         for val in df[col].dropna().unique():
             str_val = str(val)
             if ANON_PATTERN.match(str_val):
                 warnings.append(
-                    f"警告: 列'{col}'に匿名化パターンと似た値があります: {str_val}"
+                    f"警告: 列'{col}'に仮名化パターンと似た値があります: {str_val}"
                 )
     return warnings
 
@@ -384,8 +384,8 @@ def detect_pii_values(series: pd.Series) -> list[list[PIIValueResult]]:
     return detector.detect_pii_values(series)
 
 
-class AnonymizationStrategy(Enum):
-    """匿名化戦略"""
+class PseudonymizationStrategy(Enum):
+    """仮名化戦略"""
     REPLACE = "replace"      # ランダムUUIDに置換
     GENERALIZE = "generalize"  # 一般化（生年月日→年代、住所→都道府県）
     DELETE = "delete"        # 列ごと削除
@@ -481,7 +481,7 @@ def _generalize_age(value: str) -> str:
     return value_str
 
 
-def anonymize_dataframe(
+def pseudonymize_dataframe(
     df: pd.DataFrame,
     pii_columns: dict[str, PIIColumnResult],
     strategy: Literal["replace", "generalize", "delete"] = "replace",
@@ -490,20 +490,20 @@ def anonymize_dataframe(
     global_mapping: dict[str, dict[str, str]] | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """
-    DataFrameを匿名化する
+    DataFrameを仮名化する
 
     Args:
-        df: 匿名化対象のDataFrame
+        df: 仮名化対象のDataFrame
         pii_columns: detect_pii_columns()の結果
-        strategy: 匿名化戦略 ('replace', 'generalize', 'delete')
+        strategy: 仮名化戦略 ('replace', 'generalize', 'delete')
         original_file: 元ファイル名（メタデータ用）
         session_id: セッションID（指定しない場合は自動生成）
         global_mapping: 複数ファイル間で共有するマッピング（同じ値に同じIDを割り当てる）
 
     Returns:
-        (匿名化されたDataFrame, マッピング辞書)
+        (仮名化されたDataFrame, マッピング辞書)
     """
-    anonymized_df = df.copy()
+    pseudonymized_df = df.copy()
 
     # セッションIDを生成または使用
     if session_id is None:
@@ -524,16 +524,16 @@ def anonymize_dataframe(
     }
 
     for col_name, pii_result in pii_columns.items():
-        if col_name not in anonymized_df.columns:
+        if col_name not in pseudonymized_df.columns:
             continue
 
         if strategy == "delete":
-            anonymized_df = anonymized_df.drop(columns=[col_name])
+            pseudonymized_df = pseudonymized_df.drop(columns=[col_name])
             mapping[col_name] = {"action": "deleted", "pii_type": pii_result.pii_type.value}
 
         elif strategy == "generalize":
             col_mapping = _generalize_column(
-                anonymized_df[col_name], pii_result.pii_type, session_id,
+                pseudonymized_df[col_name], pii_result.pii_type, session_id,
                 global_mapping.get(col_name),
             )
             # グローバルマッピングを更新
@@ -541,7 +541,7 @@ def anonymize_dataframe(
                 global_mapping[col_name] = {}
             global_mapping[col_name].update(col_mapping)
 
-            anonymized_df[col_name] = anonymized_df[col_name].map(
+            pseudonymized_df[col_name] = pseudonymized_df[col_name].map(
                 lambda x: col_mapping.get(str(x) if pd.notna(x) else x, x)
             )
             mapping[col_name] = {
@@ -552,7 +552,7 @@ def anonymize_dataframe(
 
         else:  # replace
             col_mapping = _replace_column(
-                anonymized_df[col_name], pii_result.pii_type, session_id,
+                pseudonymized_df[col_name], pii_result.pii_type, session_id,
                 global_mapping.get(col_name),
             )
             # グローバルマッピングを更新
@@ -560,7 +560,7 @@ def anonymize_dataframe(
                 global_mapping[col_name] = {}
             global_mapping[col_name].update(col_mapping)
 
-            anonymized_df[col_name] = anonymized_df[col_name].map(
+            pseudonymized_df[col_name] = pseudonymized_df[col_name].map(
                 lambda x: col_mapping.get(str(x) if pd.notna(x) else x, x)
             )
             mapping[col_name] = {
@@ -569,7 +569,7 @@ def anonymize_dataframe(
                 "values": col_mapping,
             }
 
-    return anonymized_df, mapping
+    return pseudonymized_df, mapping
 
 
 def _replace_column(
@@ -587,7 +587,7 @@ def _replace_column(
         existing_mapping: 既存のマッピング（同じ値に同じIDを割り当てる）
 
     Returns:
-        値→匿名化IDのマッピング
+        値→仮名化IDのマッピング
     """
     mapping: dict[str, str] = {}
     prefix = SEMANTIC_PREFIXES.get(pii_type, "ID")
@@ -689,7 +689,7 @@ def save_mapping(
     マッピングを暗号化して保存
 
     Args:
-        mapping: 匿名化マッピング辞書
+        mapping: 仮名化マッピング辞書
         filepath: 保存先パス
         password: 暗号化パスワード
     """
@@ -746,20 +746,20 @@ def load_mapping(
     return json.loads(decrypted_data.decode("utf-8"))
 
 
-def deanonymize_dataframe(
+def restore_dataframe(
     df: pd.DataFrame,
     mapping: dict,
 ) -> pd.DataFrame:
     """
-    匿名化を解除してDataFrameを復元
+    仮名化を解除してDataFrameを復元
 
     値ベースの復元: 列名に関係なく全セルをスキャンして復元する。
     これにより、LLMがデータを並べ替えたり、新しい列に配置した場合でも
     正しく復元できる。
 
     Args:
-        df: 匿名化されたDataFrame
-        mapping: 匿名化時に生成されたマッピング
+        df: 仮名化されたDataFrame
+        mapping: 仮名化時に生成されたマッピング
 
     Returns:
         復元されたDataFrame
@@ -809,29 +809,29 @@ def deanonymize_dataframe(
     return restored_df
 
 
-class Anonymizer:
-    """個人情報を匿名化するクラス"""
+class Pseudonymizer:
+    """個人情報を仮名化するクラス"""
 
     def __init__(self):
         self.mappings: dict[str, Any] = {}
         self.detector = PIIDetector()
 
-    def anonymize(
+    def pseudonymize(
         self,
         df: pd.DataFrame,
         strategy: Literal["replace", "generalize", "delete"] = "replace",
         columns: list[str] | None = None,
     ) -> tuple[pd.DataFrame, dict]:
         """
-        DataFrameを匿名化する
+        DataFrameを仮名化する
 
         Args:
-            df: 匿名化対象のDataFrame
-            strategy: 匿名化戦略
-            columns: 匿名化対象列（Noneの場合は自動検出）
+            df: 仮名化対象のDataFrame
+            strategy: 仮名化戦略
+            columns: 仮名化対象列（Noneの場合は自動検出）
 
         Returns:
-            (匿名化されたDataFrame, マッピング辞書)
+            (仮名化されたDataFrame, マッピング辞書)
         """
         # PII列を検出または指定された列を使用
         if columns is None:
@@ -848,12 +848,12 @@ class Anonymizer:
                 if col in df.columns
             }
 
-        anonymized_df, mapping = anonymize_dataframe(df, pii_columns, strategy)
+        pseudonymized_df, mapping = pseudonymize_dataframe(df, pii_columns, strategy)
         self.mappings = mapping
-        return anonymized_df, mapping
+        return pseudonymized_df, mapping
 
-    def deanonymize(self, df: pd.DataFrame, mapping: dict | None = None) -> pd.DataFrame:
-        """匿名化を解除する"""
+    def restore(self, df: pd.DataFrame, mapping: dict | None = None) -> pd.DataFrame:
+        """仮名化を解除する"""
         if mapping is None:
             mapping = self.mappings
-        return deanonymize_dataframe(df, mapping)
+        return restore_dataframe(df, mapping)

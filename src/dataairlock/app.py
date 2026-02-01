@@ -6,11 +6,11 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from dataairlock.anonymizer import (
+from dataairlock.pseudonymizer import (
     Confidence,
     PIIType,
-    anonymize_dataframe,
-    deanonymize_dataframe,
+    pseudonymize_dataframe,
+    restore_dataframe,
     detect_pii_columns,
     load_mapping,
     PIIColumnResult,
@@ -62,15 +62,15 @@ def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
 def generate_llm_prompt(
     filename: str,
     columns_info: list[dict],
-    anonymized_columns: list[str],
+    pseudonymized_columns: list[str],
 ) -> str:
     """LLM用プロンプトを生成"""
-    prompt = f"""以下は匿名化済みの医療データ「{filename}」です。
+    prompt = f"""以下は仮名化済みの医療データ「{filename}」です。
 
 ## データ概要
-このデータは個人情報保護のため、以下の列が匿名化されています：
+このデータは個人情報保護のため、以下の列が仮名化されています：
 
-| 列名 | 匿名化方法 |
+| 列名 | 仮名化方法 |
 |------|-----------|
 """
     for info in columns_info:
@@ -78,7 +78,7 @@ def generate_llm_prompt(
 
     prompt += f"""
 ## 注意事項
-- `ANON_` で始まる値は匿名化されたIDです。同じIDは同一の元データを指します
+- `ANON_` で始まる値は仮名化されたIDです。同じIDは同一の元データを指します
 - 一般化された値（年代、都道府県など）は元の詳細情報を含みません
 - 削除された列は復元できません
 
@@ -93,15 +93,15 @@ def generate_llm_prompt(
     return prompt
 
 
-def render_anonymize_mode():
-    """匿名化モードのUI"""
+def render_pseudonymize_mode():
+    """仮名化モードのUI"""
     # セッション状態の初期化
     if "df" not in st.session_state:
         st.session_state.df = None
     if "pii_columns" not in st.session_state:
         st.session_state.pii_columns = {}
-    if "anonymized_df" not in st.session_state:
-        st.session_state.anonymized_df = None
+    if "pseudonymized_df" not in st.session_state:
+        st.session_state.pseudonymized_df = None
     if "mapping" not in st.session_state:
         st.session_state.mapping = None
 
@@ -112,7 +112,7 @@ def render_anonymize_mode():
         "CSV または Excel ファイルをアップロード",
         type=["csv", "xlsx", "xls"],
         help="個人情報を含むデータファイルをアップロードしてください",
-        key="anonymize_upload",
+        key="pseudonymize_upload",
     )
 
     if uploaded_file is not None:
@@ -125,7 +125,7 @@ def render_anonymize_mode():
             st.session_state.pii_columns = detect_pii_columns(df)
 
             # リセット
-            st.session_state.anonymized_df = None
+            st.session_state.pseudonymized_df = None
             st.session_state.mapping = None
 
     # データがある場合の処理
@@ -189,7 +189,7 @@ def render_anonymize_mode():
         column_actions: dict[str, str] = {}
 
         if pii_columns:
-            st.markdown("各列の匿名化方法を選択してください:")
+            st.markdown("各列の仮名化方法を選択してください:")
 
             cols = st.columns(2)
 
@@ -244,7 +244,7 @@ def render_anonymize_mode():
                 password_valid = True
 
         # ========== Step 5: 実行 ==========
-        st.header("🚀 Step 5: 匿名化実行")
+        st.header("🚀 Step 5: 仮名化実行")
 
         # 実行可能条件のチェック
         can_execute = (
@@ -259,8 +259,8 @@ def render_anonymize_mode():
             elif not any(action != "skip" for action in column_actions.values()):
                 st.info("少なくとも1つの列を処理対象にしてください")
 
-        if st.button("🔒 匿名化を実行", disabled=not can_execute, type="primary", key="run_anonymize"):
-            with st.spinner("匿名化処理中..."):
+        if st.button("🔒 仮名化を実行", disabled=not can_execute, type="primary", key="run_pseudonymize"):
+            with st.spinner("仮名化処理中..."):
                 # 処理対象の列を抽出
                 columns_to_process = {
                     col: result
@@ -269,7 +269,7 @@ def render_anonymize_mode():
                 }
 
                 # 戦略ごとに分けて処理
-                anonymized_df = df.copy()
+                pseudonymized_df = df.copy()
                 full_mapping: dict = {
                     "metadata": {
                         "created_at": datetime.now().isoformat(),
@@ -284,9 +284,9 @@ def render_anonymize_mode():
                     # 単一列のPII結果を作成
                     single_col_pii = {col_name: result}
 
-                    # 匿名化実行
-                    anonymized_df, col_mapping = anonymize_dataframe(
-                        anonymized_df,
+                    # 仮名化実行
+                    pseudonymized_df, col_mapping = pseudonymize_dataframe(
+                        pseudonymized_df,
                         single_col_pii,
                         strategy=action,  # type: ignore
                     )
@@ -295,15 +295,15 @@ def render_anonymize_mode():
                     if col_name in col_mapping:
                         full_mapping[col_name] = col_mapping[col_name]
 
-                st.session_state.anonymized_df = anonymized_df
+                st.session_state.pseudonymized_df = pseudonymized_df
                 st.session_state.mapping = full_mapping
                 st.session_state.password = password
                 st.session_state.column_actions = column_actions
 
-            st.success("✅ 匿名化が完了しました！")
+            st.success("✅ 仮名化が完了しました！")
 
         # ========== Step 6: 結果表示 & ダウンロード ==========
-        if st.session_state.anonymized_df is not None:
+        if st.session_state.pseudonymized_df is not None:
             st.header("📋 Step 6: 結果確認 & ダウンロード")
 
             # 比較表示
@@ -314,8 +314,8 @@ def render_anonymize_mode():
                 st.dataframe(df.head(), width='stretch')
 
             with col2:
-                st.subheader("🔒 匿名化後（先頭5行）")
-                st.dataframe(st.session_state.anonymized_df.head(), width='stretch')
+                st.subheader("🔒 仮名化後（先頭5行）")
+                st.dataframe(st.session_state.pseudonymized_df.head(), width='stretch')
 
             # 処理サマリー
             st.subheader("📊 処理サマリー")
@@ -352,13 +352,13 @@ def render_anonymize_mode():
             col1, col2 = st.columns(2)
 
             with col1:
-                # 匿名化CSVのダウンロード（UTF-8 BOM付き）
-                csv_data = dataframe_to_csv_bytes(st.session_state.anonymized_df)
+                # 仮名化CSVのダウンロード（UTF-8 BOM付き）
+                csv_data = dataframe_to_csv_bytes(st.session_state.pseudonymized_df)
 
                 st.download_button(
-                    label="📥 匿名化データをダウンロード (CSV)",
+                    label="📥 仮名化データをダウンロード (CSV)",
                     data=csv_data,
-                    file_name="anonymized.csv",
+                    file_name="pseudonymized.csv",
                     mime="text/csv",
                 )
 
@@ -398,11 +398,11 @@ def render_anonymize_mode():
             llm_prompt = generate_llm_prompt(
                 filename=st.session_state.filename,
                 columns_info=summary_data,
-                anonymized_columns=[d["列名"] for d in summary_data],
+                pseudonymized_columns=[d["列名"] for d in summary_data],
             )
 
             st.text_area(
-                "以下のプロンプトをコピーして、匿名化CSVと一緒にClaude Codeに渡してください：",
+                "以下のプロンプトをコピーして、仮名化CSVと一緒にClaude Codeに渡してください：",
                 value=llm_prompt,
                 height=400,
                 key="llm_prompt",
@@ -421,14 +421,14 @@ def render_anonymize_mode():
 
             1. **ファイルアップロード**: 個人情報を含むCSVまたはExcelファイルをアップロード
             2. **PII検出確認**: 自動検出された個人情報列を確認
-            3. **処理方法選択**: 各列の匿名化方法を選択
+            3. **処理方法選択**: 各列の仮名化方法を選択
                - **置換**: ランダムIDに置換（復元可能）
                - **一般化**: 生年月日→年代、住所→都道府県など
                - **削除**: 列を完全に削除
                - **スキップ**: 処理しない
             4. **パスワード設定**: マッピングファイルの暗号化用
-            5. **実行**: 匿名化を実行
-            6. **ダウンロード**: 匿名化データとマッピングファイルを取得
+            5. **実行**: 仮名化を実行
+            6. **ダウンロード**: 仮名化データとマッピングファイルを取得
 
             ### 対応する個人情報
 
@@ -476,9 +476,9 @@ def render_restore_mode():
     st.subheader("🔐 Step 2: マッピングファイルをアップロード")
 
     mapping_file = st.file_uploader(
-        "匿名化時に保存したmapping.encファイル",
+        "仮名化時に保存したmapping.encファイル",
         type=["enc"],
-        help="匿名化時にダウンロードしたマッピングファイル",
+        help="仮名化時にダウンロードしたマッピングファイル",
         key="restore_mapping_upload",
     )
 
@@ -488,7 +488,7 @@ def render_restore_mode():
     restore_password = st.text_input(
         "マッピングファイルのパスワード",
         type="password",
-        help="匿名化時に設定したパスワード",
+        help="仮名化時に設定したパスワード",
         key="restore_password",
     )
 
@@ -543,7 +543,7 @@ def render_restore_mode():
 
     if st.button("🔓 復元を実行", disabled=not can_restore, type="primary", key="run_restore"):
         with st.spinner("復元処理中..."):
-            restored_df = deanonymize_dataframe(
+            restored_df = depseudonymize_dataframe(
                 st.session_state.restore_df,
                 st.session_state.restore_mapping,
             )
@@ -633,13 +633,13 @@ def main():
     )
 
     st.title("🔒 DataAirlock")
-    st.markdown("個人情報を匿名化してクラウドLLMに安全に渡すためのツール")
+    st.markdown("個人情報を仮名化してクラウドLLMに安全に渡すためのツール")
 
-    # タブで匿名化/復元を切り替え
-    tab1, tab2 = st.tabs(["🔒 匿名化", "🔓 復元"])
+    # タブで仮名化/復元を切り替え
+    tab1, tab2 = st.tabs(["🔒 仮名化", "🔓 復元"])
 
     with tab1:
-        render_anonymize_mode()
+        render_pseudonymize_mode()
 
     with tab2:
         render_restore_mode()

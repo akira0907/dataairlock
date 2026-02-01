@@ -19,21 +19,21 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.tree import Tree
 
-from dataairlock.anonymizer import (
+from dataairlock.pseudonymizer import (
     Confidence,
     PIIColumnResult,
     PIIType,
-    anonymize_dataframe,
-    deanonymize_dataframe,
+    pseudonymize_dataframe,
+    restore_dataframe,
     detect_pii_columns,
     load_mapping,
     save_mapping,
 )
-from dataairlock.document_anonymizer import (
-    DocumentAnonymizer,
+from dataairlock.document_pseudonymizer import (
+    DocumentPseudonymizer,
     DocumentPIIResult,
-    anonymize_document,
-    deanonymize_document,
+    pseudonymize_document,
+    restore_document,
     scan_document,
 )
 from dataairlock.profile import ProfileManager
@@ -45,7 +45,7 @@ from dataairlock.hybrid_detector import (
 
 app = typer.Typer(
     name="dataairlock",
-    help="個人情報を匿名化してクラウドLLMに安全に渡すためのCLIツール",
+    help="個人情報を仮名化してクラウドLLMに安全に渡すためのCLIツール",
     no_args_is_help=False,
 )
 
@@ -100,31 +100,31 @@ def generate_prompt_file(
     original_filename: str,
     row_count: int,
     columns: list[str],
-    anonymized_info: list[dict],
+    pseudonymized_info: list[dict],
 ) -> str:
     """LLM用プロンプトを生成"""
     columns_str = ", ".join(columns)
 
-    anonymized_lines = []
-    for info in anonymized_info:
+    pseudonymized_lines = []
+    for info in pseudonymized_info:
         action_desc = {
             "replaced": "replace（元データ復元可能）",
             "generalized": "generalize（一般化）",
             "deleted": "delete（削除済み）",
         }.get(info["action"], info["action"])
-        anonymized_lines.append(f"- {info['column']}: {action_desc}")
+        pseudonymized_lines.append(f"- {info['column']}: {action_desc}")
 
-    anonymized_section = "\n".join(anonymized_lines) if anonymized_lines else "- なし"
+    pseudonymized_section = "\n".join(pseudonymized_lines) if pseudonymized_lines else "- なし"
 
-    return f"""このCSVは匿名化済みデータです。
+    return f"""このCSVは仮名化済みデータです。
 
 ## データ概要
 - 元ファイル: {original_filename}
 - 行数: {row_count}
 - 列: {columns_str}
 
-## 匿名化された列
-{anonymized_section}
+## 仮名化された列
+{pseudonymized_section}
 
 ## 重要な指示
 - 処理結果はCSV形式で出力してください
@@ -166,7 +166,7 @@ def scan(
     ),
 ):
     """
-    PIIを検出して表示（匿名化は実行しない）
+    PIIを検出して表示（仮名化は実行しない）
 
     検出モード:
     - rule: ルールベース（正規表現）のみ（デフォルト、高速）
@@ -244,7 +244,7 @@ def scan(
 
 
 @app.command()
-def anonymize(
+def pseudonymize(
     input_file: Path = typer.Argument(..., help="入力ファイル（CSV/Excel）"),
     output: Path = typer.Option(
         Path("./output"),
@@ -273,7 +273,7 @@ def anonymize(
     ),
 ):
     """
-    ファイルを匿名化する
+    ファイルを仮名化する
 
     検出モード:
     - rule: ルールベース（正規表現）のみ（デフォルト、高速）
@@ -359,10 +359,10 @@ def anonymize(
     # 出力ディレクトリ作成
     output.mkdir(parents=True, exist_ok=True)
 
-    # 匿名化実行
-    console.print("\n[bold]匿名化を実行中...[/bold]")
+    # 仮名化実行
+    console.print("\n[bold]仮名化を実行中...[/bold]")
 
-    anonymized_df = df.copy()
+    pseudonymized_df = df.copy()
     full_mapping: dict = {
         "metadata": {
             "created_at": datetime.now().isoformat(),
@@ -371,7 +371,7 @@ def anonymize(
         }
     }
 
-    anonymized_info = []
+    pseudonymized_info = []
     for col_name, action in columns_to_process.items():
         if col_name not in pii_columns:
             continue
@@ -379,39 +379,39 @@ def anonymize(
         result = pii_columns[col_name]
         single_col_pii = {col_name: result}
 
-        anonymized_df, col_mapping = anonymize_dataframe(
-            anonymized_df,
+        pseudonymized_df, col_mapping = pseudonymize_dataframe(
+            pseudonymized_df,
             single_col_pii,
             strategy=action,  # type: ignore
         )
 
         if col_name in col_mapping:
             full_mapping[col_name] = col_mapping[col_name]
-            anonymized_info.append({
+            pseudonymized_info.append({
                 "column": col_name,
                 "action": col_mapping[col_name].get("action", action),
             })
 
     # ファイル出力
-    csv_path = output / "anonymized.csv"
+    csv_path = output / "pseudonymized.csv"
     mapping_path = output / "mapping.enc"
     prompt_path = output / "prompt.txt"
 
-    save_dataframe(anonymized_df, csv_path)
+    save_dataframe(pseudonymized_df, csv_path)
     save_mapping(full_mapping, mapping_path, password)
 
     prompt_content = generate_prompt_file(
         original_filename=input_file.name,
         row_count=len(df),
-        columns=list(anonymized_df.columns),
-        anonymized_info=anonymized_info,
+        columns=list(pseudonymized_df.columns),
+        pseudonymized_info=pseudonymized_info,
     )
     prompt_path.write_text(prompt_content, encoding="utf-8")
 
     # 完了メッセージ
     console.print()
     console.print(Panel(
-        "[green]✅ 匿名化が完了しました[/green]\n\n"
+        "[green]✅ 仮名化が完了しました[/green]\n\n"
         f"  📄 {csv_path}\n"
         f"  🔐 {mapping_path}\n"
         f"  📝 {prompt_path}",
@@ -439,7 +439,7 @@ def restore(
     ),
 ):
     """
-    匿名化されたデータを復元する
+    仮名化されたデータを復元する
     """
     # ファイル確認
     if not result_file.exists():
@@ -482,7 +482,7 @@ def restore(
 
     # 復元実行
     console.print("\n[bold]復元を実行中...[/bold]")
-    restored_df = deanonymize_dataframe(df, mapping_data)
+    restored_df = restore_dataframe(df, mapping_data)
 
     # 保存
     save_dataframe(restored_df, output)
@@ -525,17 +525,17 @@ def restore(
 @app.command()
 def interactive():
     """
-    対話モードで匿名化/復元を実行
+    対話モードで仮名化/復元を実行
     """
     console.print(Panel(
         "[bold cyan]DataAirlock[/bold cyan] - 対話モード\n"
-        "個人情報を匿名化してクラウドLLMに安全に渡すためのツール",
+        "個人情報を仮名化してクラウドLLMに安全に渡すためのツール",
         title="🔒",
     ))
 
     while True:
         console.print("\n[bold]何をしますか？[/bold]")
-        console.print("  1. ファイルを匿名化")
+        console.print("  1. ファイルを仮名化")
         console.print("  2. 結果を復元")
         console.print("  3. PII検出のみ")
         console.print("  q. 終了")
@@ -547,7 +547,7 @@ def interactive():
             break
 
         if choice == "1":
-            # 匿名化
+            # 仮名化
             file_path = Prompt.ask("ファイルパスを入力")
             path = Path(file_path)
 
@@ -555,7 +555,7 @@ def interactive():
                 console.print(f"[red]エラー: ファイルが見つかりません: {path}[/red]")
                 continue
 
-            # anonymizeコマンドを呼び出し（対話モード）
+            # pseudonymizeコマンドを呼び出し（対話モード）
             try:
                 df = load_dataframe(path)
             except Exception as e:
@@ -602,10 +602,10 @@ def interactive():
             output_dir = Path(Prompt.ask("出力ディレクトリ", default="./output"))
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # 匿名化実行
-            console.print("\n[bold]匿名化を実行中...[/bold]")
+            # 仮名化実行
+            console.print("\n[bold]仮名化を実行中...[/bold]")
 
-            anonymized_df = df.copy()
+            pseudonymized_df = df.copy()
             full_mapping: dict = {
                 "metadata": {
                     "created_at": datetime.now().isoformat(),
@@ -614,7 +614,7 @@ def interactive():
                 }
             }
 
-            anonymized_info = []
+            pseudonymized_info = []
             for col_name, action in columns_to_process.items():
                 if col_name not in pii_columns:
                     continue
@@ -622,32 +622,32 @@ def interactive():
                 result = pii_columns[col_name]
                 single_col_pii = {col_name: result}
 
-                anonymized_df, col_mapping = anonymize_dataframe(
-                    anonymized_df,
+                pseudonymized_df, col_mapping = pseudonymize_dataframe(
+                    pseudonymized_df,
                     single_col_pii,
                     strategy=action,  # type: ignore
                 )
 
                 if col_name in col_mapping:
                     full_mapping[col_name] = col_mapping[col_name]
-                    anonymized_info.append({
+                    pseudonymized_info.append({
                         "column": col_name,
                         "action": col_mapping[col_name].get("action", action),
                     })
 
             # 保存
-            csv_path = output_dir / "anonymized.csv"
+            csv_path = output_dir / "pseudonymized.csv"
             mapping_path = output_dir / "mapping.enc"
             prompt_path = output_dir / "prompt.txt"
 
-            save_dataframe(anonymized_df, csv_path)
+            save_dataframe(pseudonymized_df, csv_path)
             save_mapping(full_mapping, mapping_path, password)
 
             prompt_content = generate_prompt_file(
                 original_filename=path.name,
                 row_count=len(df),
-                columns=list(anonymized_df.columns),
-                anonymized_info=anonymized_info,
+                columns=list(pseudonymized_df.columns),
+                pseudonymized_info=pseudonymized_info,
             )
             prompt_path.write_text(prompt_content, encoding="utf-8")
 
@@ -683,7 +683,7 @@ def interactive():
             console.print("[green]✓ マッピングファイルを読み込みました[/green]")
 
             df = pd.read_csv(result_path)
-            restored_df = deanonymize_dataframe(df, mapping_data)
+            restored_df = restore_dataframe(df, mapping_data)
 
             output_path = Path(Prompt.ask("出力ファイル名", default="restored.csv"))
             save_dataframe(restored_df, output_path)
@@ -769,8 +769,8 @@ def scan_doc(
     console.print(f"[yellow]⚠️  {result.total_matches}件の個人情報を検出しました[/yellow]")
 
 
-@app.command(name="anonymize-doc")
-def anonymize_doc(
+@app.command(name="pseudonymize-doc")
+def pseudonymize_doc(
     input_file: Path = typer.Argument(..., help="入力ファイル（.docx/.pptx）"),
     output: Optional[Path] = typer.Option(
         None,
@@ -785,11 +785,11 @@ def anonymize_doc(
     strategy: str = typer.Option(
         "replace",
         "-s", "--strategy",
-        help="匿名化戦略: replace/generalize",
+        help="仮名化戦略: replace/generalize",
     ),
 ):
     """
-    Word/PowerPointファイルを匿名化する
+    Word/PowerPointファイルを仮名化する
     """
     if not input_file.exists():
         console.print(f"[red]エラー: ファイルが見つかりません: {input_file}[/red]")
@@ -804,14 +804,14 @@ def anonymize_doc(
     # 戦略の検証
     if strategy not in ["replace", "generalize"]:
         console.print(f"[red]エラー: 無効な戦略: {strategy}[/red]")
-        console.print("  ドキュメント匿名化では replace または generalize を使用してください")
+        console.print("  ドキュメント仮名化では replace または generalize を使用してください")
         raise typer.Exit(1)
 
     # 出力パス決定
     if output is None:
         output_dir = Path("./output")
         output_dir.mkdir(parents=True, exist_ok=True)
-        output = output_dir / f"anonymized_{input_file.name}"
+        output = output_dir / f"pseudonymized_{input_file.name}"
     else:
         # 出力先の親ディレクトリを作成
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -843,13 +843,13 @@ def anonymize_doc(
     if password is None:
         password = get_password_interactive(confirm=True)
 
-    # 匿名化実行
-    console.print("\n[bold]匿名化を実行中...[/bold]")
+    # 仮名化実行
+    console.print("\n[bold]仮名化を実行中...[/bold]")
 
     try:
-        result, mapping = anonymize_document(input_file, output, strategy)  # type: ignore
+        result, mapping = pseudonymize_document(input_file, output, strategy)  # type: ignore
     except Exception as e:
-        console.print(f"[red]エラー: 匿名化に失敗しました: {e}[/red]")
+        console.print(f"[red]エラー: 仮名化に失敗しました: {e}[/red]")
         raise typer.Exit(1)
 
     # マッピング保存
@@ -859,7 +859,7 @@ def anonymize_doc(
     # 完了メッセージ
     console.print()
     console.print(Panel(
-        f"[green]✅ 匿名化が完了しました[/green]\n\n"
+        f"[green]✅ 仮名化が完了しました[/green]\n\n"
         f"  📄 {output}\n"
         f"  🔐 {mapping_path}\n\n"
         f"  置換数: {result.total_matches}件",
@@ -887,7 +887,7 @@ def restore_doc(
     ),
 ):
     """
-    匿名化されたWord/PowerPointファイルを復元する
+    仮名化されたWord/PowerPointファイルを復元する
     """
     if not input_file.exists():
         console.print(f"[red]エラー: ファイルが見つかりません: {input_file}[/red]")
@@ -936,7 +936,7 @@ def restore_doc(
     console.print("\n[bold]復元を実行中...[/bold]")
 
     try:
-        deanonymize_document(input_file, output, mapping_data)
+        restore_document(input_file, output, mapping_data)
     except Exception as e:
         console.print(f"[red]エラー: 復元に失敗しました: {e}[/red]")
         raise typer.Exit(1)
@@ -1005,22 +1005,22 @@ def _generate_airlock_readme(airlock_path: Path, files_info: list[dict] | None =
     return f"""# DataAirlock Workspace
 
 このディレクトリはDataAirlockによって生成された**セキュアな作業環境**です。
-個人情報は匿名化されており、安全にAIツールで分析できます。
+個人情報は仮名化されており、安全にAIツールで分析できます。
 
 ## ディレクトリ構造
 
 ```
 .airlock/
-├── data/           # 匿名化済みデータ（AIに渡してOK）
+├── data/           # 仮名化済みデータ（AIに渡してOK）
 ├── output/         # 分析結果の出力先
 ├── CLAUDE.md       # Claude Code用設定
 ├── SYSTEM_PROMPT.md # 汎用システムプロンプト
 └── README.md       # このファイル
 ```
 {files_section}
-## 匿名化IDについて
+## 仮名化IDについて
 
-データ内の以下の形式は匿名化された個人情報です：
+データ内の以下の形式は仮名化された個人情報です：
 
 | 形式 | 意味 | 例 |
 |------|------|-----|
@@ -1035,7 +1035,7 @@ def _generate_airlock_readme(airlock_path: Path, files_info: list[dict] | None =
 ## ワークフロー
 
 1. **分析**: `data/` 内のファイルをAIツールで分析
-2. **出力**: 結果を `output/` に保存（匿名化IDはそのまま維持）
+2. **出力**: 結果を `output/` に保存（仮名化IDはそのまま維持）
 3. **復元**: プロジェクトルートで `dataairlock workspace ../ --restore-all` を実行
 
 ## 注意事項
@@ -1058,23 +1058,23 @@ def _generate_claude_md(files_info: list[dict] | None = None) -> str:
 
     return f"""# DataAirlock セキュア環境
 
-このワークスペースには**匿名化された機密データ**が含まれています。
+このワークスペースには**仮名化された機密データ**が含まれています。
 以下のルールを厳守してください。
 
 ## 絶対ルール
 
 ### 禁止事項
 - **このディレクトリ外のファイルを読み込まない**（`../` へのアクセス禁止）
-- **匿名化IDから元の値を推測・復元しようとしない**
-- **匿名化IDを変更・削除しない**
+- **仮名化IDから元の値を推測・復元しようとしない**
+- **仮名化IDを変更・削除しない**
 - **データを外部に送信しない**
 
 ### 必須事項
 - 結果ファイルは必ず `output/` ディレクトリに保存する
-- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持する
-- 新しい列を追加する場合も、既存の匿名化ID列は保持する
+- 仮名化ID（`PERSON_001_XXXX` 形式）はそのまま維持する
+- 新しい列を追加する場合も、既存の仮名化ID列は保持する
 {files_section}
-## 匿名化IDの形式
+## 仮名化IDの形式
 
 | プレフィックス | 意味 |
 |--------------|------|
@@ -1096,7 +1096,7 @@ df.to_csv("output/result.csv", index=False, encoding="utf-8-sig")
 
 ## 復元について
 
-匿名化IDの復元はこのワークスペース外で行われます。
+仮名化IDの復元はこのワークスペース外で行われます。
 あなたは復元処理を行う必要はありません。
 """
 
@@ -1115,15 +1115,15 @@ def _generate_system_prompt_md(files_info: list[dict] | None = None) -> str:
 
 # 環境説明
 
-このディレクトリには匿名化された機密データが含まれています。
-個人情報は `PERSON_001_A7K2` のような形式で匿名化されています。
+このディレクトリには仮名化された機密データが含まれています。
+個人情報は `PERSON_001_A7K2` のような形式で仮名化されています。
 
 # 厳守ルール
 
 1. このディレクトリ外のファイルを絶対に読み込まないでください
-2. 匿名化IDから元の値を推測しようとしないでください
+2. 仮名化IDから元の値を推測しようとしないでください
 3. 結果は必ず output/ ディレクトリに保存してください
-4. 匿名化ID列は削除・変更せず、そのまま維持してください
+4. 仮名化ID列は削除・変更せず、そのまま維持してください
 
 # 禁止コマンド例
 
@@ -1137,13 +1137,13 @@ def _generate_system_prompt_md(files_info: list[dict] | None = None) -> str:
 2. 分析・処理を行う
 3. 結果を output/ に保存する
 
-匿名化IDの復元は別途行われるため、あなたが行う必要はありません。
+仮名化IDの復元は別途行われるため、あなたが行う必要はありません。
 """
 
 
 def _generate_prompt_md(files_info: list[dict]) -> str:
     """PROMPT.mdを生成（分析依頼テンプレート）"""
-    files_table = "| ファイル | 元ファイル | 匿名化列 |\n|---------|-----------|----------|\n"
+    files_table = "| ファイル | 元ファイル | 仮名化列 |\n|---------|-----------|----------|\n"
     for info in files_info:
         pii_cols = ", ".join(info.get("pii_columns", [])) or "なし"
         files_table += f"| data/{info['name']} | {info['original']} | {pii_cols} |\n"
@@ -1170,7 +1170,7 @@ def _generate_prompt_md(files_info: list[dict]) -> str:
 
 ## 注意
 
-- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持してください
+- 仮名化ID（`PERSON_001_XXXX` 形式）はそのまま維持してください
 - このディレクトリ外のファイルにはアクセスしないでください
 """
 
@@ -1211,7 +1211,7 @@ def workspace(
     add: Optional[Path] = typer.Option(
         None,
         "--add", "-a",
-        help="匿名化して追加するファイル",
+        help="仮名化して追加するファイル",
     ),
     add_all: Optional[Path] = typer.Option(
         None,
@@ -1406,7 +1406,7 @@ def workspace(
         # 復元実行
         try:
             df = pd.read_csv(restore_path)
-            restored_df = deanonymize_dataframe(df, all_mappings)
+            restored_df = restore_dataframe(df, all_mappings)
 
             # 出力先
             results_dir = project_dir / "results"
@@ -1500,7 +1500,7 @@ def workspace(
                 output_path.parent.mkdir(parents=True, exist_ok=True)
 
                 df = pd.read_csv(csv_file)
-                restored_df = deanonymize_dataframe(df, all_mappings)
+                restored_df = restore_dataframe(df, all_mappings)
                 save_dataframe(restored_df, output_path)
                 console.print(f"  [green]✓[/green] {rel_path}")
                 restored_count += 1
@@ -1620,8 +1620,8 @@ def workspace(
                 "files": {},
             }
 
-        # 全ファイルを匿名化
-        console.print("\n[bold]匿名化を実行中...[/bold]")
+        # 全ファイルを仮名化
+        console.print("\n[bold]仮名化を実行中...[/bold]")
         processed_count = 0
 
         for file_path, df, file_pii_cols in file_data:
@@ -1646,8 +1646,8 @@ def workspace(
                 processed_count += 1
                 continue
 
-            # 匿名化実行
-            anonymized_df = df.copy()
+            # 仮名化実行
+            pseudonymized_df = df.copy()
             full_mapping: dict = {
                 "metadata": {
                     "created_at": datetime.now().isoformat(),
@@ -1663,8 +1663,8 @@ def workspace(
                 result = file_pii_cols[col_name]
                 single_col_pii = {col_name: result}
 
-                anonymized_df, col_mapping = anonymize_dataframe(
-                    anonymized_df,
+                pseudonymized_df, col_mapping = pseudonymize_dataframe(
+                    pseudonymized_df,
                     single_col_pii,
                     strategy=action,  # type: ignore
                 )
@@ -1676,7 +1676,7 @@ def workspace(
             data_output = airlock_path / AIRLOCK_DATA_DIR / f"{file_stem}.csv"
             mapping_output = _get_mappings_path(project_dir) / f"{file_stem}.mapping.enc"
 
-            save_dataframe(anonymized_df, data_output)
+            save_dataframe(pseudonymized_df, data_output)
             save_mapping(full_mapping, mapping_output, password)
 
             # 設定更新
@@ -1724,7 +1724,7 @@ def workspace(
             file_list += f"\n   └── {last_file}" if file_list else f"   └── {last_file}"
 
         console.print(Panel(
-            f"[green]✅ {processed_count}ファイルを匿名化しました[/green]\n\n"
+            f"[green]✅ {processed_count}ファイルを仮名化しました[/green]\n\n"
             f"📂 {airlock_path.relative_to(project_dir)}/data/\n"
             f"{file_list}\n\n"
             f"[bold]🚀 Claude Code を起動するには:[/bold]\n"
@@ -1801,7 +1801,7 @@ def workspace(
         # 戦略選択
         console.print()
         strategy = Prompt.ask(
-            "匿名化戦略",
+            "仮名化戦略",
             choices=["r", "g"],
             default="r",
         )
@@ -1826,8 +1826,8 @@ def workspace(
                 "files": {},
             }
 
-        # 匿名化実行
-        console.print("\n[bold]匿名化を実行中...[/bold]")
+        # 仮名化実行
+        console.print("\n[bold]仮名化を実行中...[/bold]")
 
         file_stem = add_path.stem
         output_ext = add_path.suffix
@@ -1835,10 +1835,10 @@ def workspace(
         mapping_output = _get_mappings_path(project_dir) / f"{file_stem}.mapping.enc"
 
         try:
-            result, mapping = anonymize_document(add_path, data_output, selected_strategy)  # type: ignore
+            result, mapping = pseudonymize_document(add_path, data_output, selected_strategy)  # type: ignore
             save_mapping(mapping, mapping_output, password)
         except Exception as e:
-            console.print(f"[red]エラー: 匿名化に失敗しました: {e}[/red]")
+            console.print(f"[red]エラー: 仮名化に失敗しました: {e}[/red]")
             raise typer.Exit(1)
 
         # 設定更新
@@ -1883,7 +1883,7 @@ def workspace(
         console.print(Panel(
             f"[green]✅ ワークスペースを{'作成' if is_new_workspace else '更新'}しました[/green]\n\n"
             f"📂 {airlock_path.relative_to(project_dir)}/\n"
-            f"├── {AIRLOCK_DATA_DIR}/{file_stem}{output_ext}      [dim]# 匿名化済み[/dim]\n"
+            f"├── {AIRLOCK_DATA_DIR}/{file_stem}{output_ext}      [dim]# 仮名化済み[/dim]\n"
             f"├── {AIRLOCK_OUTPUT_DIR}/              [dim]# 結果出力先[/dim]\n"
             f"├── CLAUDE.md\n"
             f"├── SYSTEM_PROMPT.md\n"
@@ -1966,10 +1966,10 @@ def workspace(
             "files": {},
         }
 
-    # 匿名化実行
-    console.print("\n[bold]匿名化を実行中...[/bold]")
+    # 仮名化実行
+    console.print("\n[bold]仮名化を実行中...[/bold]")
 
-    anonymized_df = df.copy()
+    pseudonymized_df = df.copy()
     full_mapping: dict = {
         "metadata": {
             "created_at": datetime.now().isoformat(),
@@ -1985,8 +1985,8 @@ def workspace(
         result = pii_columns[col_name]
         single_col_pii = {col_name: result}
 
-        anonymized_df, col_mapping = anonymize_dataframe(
-            anonymized_df,
+        pseudonymized_df, col_mapping = pseudonymize_dataframe(
+            pseudonymized_df,
             single_col_pii,
             strategy=action,  # type: ignore
         )
@@ -1999,7 +1999,7 @@ def workspace(
     data_output = airlock_path / AIRLOCK_DATA_DIR / f"{file_stem}.csv"
     mapping_output = _get_mappings_path(project_dir) / f"{file_stem}.mapping.enc"
 
-    save_dataframe(anonymized_df, data_output)
+    save_dataframe(pseudonymized_df, data_output)
     save_mapping(full_mapping, mapping_output, password)
 
     # 設定更新
@@ -2041,7 +2041,7 @@ def workspace(
     console.print(Panel(
         f"[green]✅ ワークスペースを{'作成' if is_new_workspace else '更新'}しました[/green]\n\n"
         f"📂 {airlock_path.relative_to(project_dir)}/\n"
-        f"├── {AIRLOCK_DATA_DIR}/{file_stem}.csv      [dim]# 匿名化済み[/dim]\n"
+        f"├── {AIRLOCK_DATA_DIR}/{file_stem}.csv      [dim]# 仮名化済み[/dim]\n"
         f"├── {AIRLOCK_OUTPUT_DIR}/              [dim]# 結果出力先[/dim]\n"
         f"├── CLAUDE.md\n"
         f"├── SYSTEM_PROMPT.md\n"
@@ -2069,10 +2069,10 @@ def _build_chat_system_prompt(
     """チャット用システムプロンプトを構築"""
     prompt_parts = [
         "あなたはDataAirlockのアシスタントです。",
-        "匿名化されたデータの分析と、データ処理タスクのサポートを行います。",
+        "仮名化されたデータの分析と、データ処理タスクのサポートを行います。",
         "",
         "# あなたの能力",
-        "1. ANON_ID（匿名化ID）と実際の値の照合",
+        "1. ANON_ID（仮名化ID）と実際の値の照合",
         "2. データ構造の説明",
         "3. Claude Code や Codex に渡すプロンプトの生成・提案",
         "4. 結果ファイルの解釈サポート",
@@ -2088,7 +2088,7 @@ def _build_chat_system_prompt(
             if "values" in col_info:
                 values = col_info["values"]
                 prompt_parts.append(f"## 列: {col_name}")
-                prompt_parts.append(f"  - 匿名化方式: {col_info.get('action', '不明')}")
+                prompt_parts.append(f"  - 仮名化方式: {col_info.get('action', '不明')}")
                 prompt_parts.append(f"  - マッピング数: {len(values)}件")
                 # サンプルを数件表示
                 sample_count = min(5, len(values))
@@ -2107,7 +2107,7 @@ def _build_chat_system_prompt(
             prompt_parts.append("  - ファイル:")
             for file_name, file_info in files.items():
                 pii_cols = file_info.get("pii_columns", file_info.get("pii_types", []))
-                pii_str = f" (匿名化列: {', '.join(pii_cols)})" if pii_cols else ""
+                pii_str = f" (仮名化列: {', '.join(pii_cols)})" if pii_cols else ""
                 prompt_parts.append(f"    - {file_info.get('name', file_name)}{pii_str}")
         prompt_parts.append("")
 
@@ -2120,7 +2120,7 @@ def _build_chat_system_prompt(
         "# 重要な指示",
         "- ANON_ID の照合を求められたら、マッピング情報から対応する値を探して回答してください",
         "- データ分析の提案では、具体的なコード例やプロンプト例を提示してください",
-        "- 個人情報の取り扱いには十分注意し、匿名化されたデータを安全に扱うようアドバイスしてください",
+        "- 個人情報の取り扱いには十分注意し、仮名化されたデータを安全に扱うようアドバイスしてください",
         "- 日本語で回答してください",
     ])
 
@@ -2204,7 +2204,7 @@ def _describe_data_structure(file_path: Path) -> str:
         anon_cols = [col for col in df.columns if "ANON_" in str(df[col].iloc[0]) if len(df) > 0]
         if anon_cols:
             lines.append("")
-            lines.append("### 匿名化された列:")
+            lines.append("### 仮名化された列:")
             for col in anon_cols:
                 lines.append(f"- {col}")
 
@@ -2226,7 +2226,7 @@ def _generate_claude_prompt(task_description: str, workspace_config: dict | None
         if files:
             prompt_parts.append("# 利用可能なデータ")
             prompt_parts.append("")
-            prompt_parts.append("| ファイル | 元ファイル | 匿名化列 |")
+            prompt_parts.append("| ファイル | 元ファイル | 仮名化列 |")
             prompt_parts.append("|---------|-----------|----------|")
             for file_name, file_info in files.items():
                 pii_cols = ", ".join(file_info.get("pii_columns", file_info.get("pii_types", []))) or "なし"
@@ -2505,7 +2505,7 @@ def chat(
 
 
 # =============================================================================
-# Wrap コマンド（匿名化レイヤー内でCLIツールを実行）
+# Wrap コマンド（仮名化レイヤー内でCLIツールを実行）
 # =============================================================================
 
 @app.command()
@@ -2533,7 +2533,7 @@ def wrap(
     ),
 ):
     """
-    匿名化レイヤー内でCLIツールを実行
+    仮名化レイヤー内でCLIツールを実行
 
     \b
     ワークスペースの .airlock/ ディレクトリ内でコマンドを実行し、
@@ -2609,7 +2609,7 @@ def wrap(
         f"📄 データ: {data_path}\n"
         f"📤 出力先: {output_path}" +
         (f"\n🔄 自動復元: 有効" if auto_restore else ""),
-        title="🔒 匿名化レイヤー",
+        title="🔒 仮名化レイヤー",
     ))
 
     # 環境変数を設定
@@ -2700,7 +2700,7 @@ def wrap(
                     output_file.parent.mkdir(parents=True, exist_ok=True)
 
                     df = pd.read_csv(csv_file)
-                    restored_df = deanonymize_dataframe(df, all_mappings)
+                    restored_df = restore_dataframe(df, all_mappings)
                     save_dataframe(restored_df, output_file)
                     console.print(f"  [green]✓[/green] {rel_path}")
                     restored_count += 1

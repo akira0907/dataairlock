@@ -1,4 +1,4 @@
-"""ドキュメント匿名化テスト"""
+"""ドキュメント仮名化テスト"""
 
 import tempfile
 from pathlib import Path
@@ -9,14 +9,14 @@ from pptx import Presentation
 from typer.testing import CliRunner
 
 from dataairlock.cli import app
-from dataairlock.document_anonymizer import (
-    DocumentAnonymizer,
+from dataairlock.document_pseudonymizer import (
+    DocumentPseudonymizer,
     DocumentPIIResult,
-    anonymize_document,
-    deanonymize_document,
+    pseudonymize_document,
+    restore_document,
     scan_document,
 )
-from dataairlock.anonymizer import load_mapping, save_mapping
+from dataairlock.pseudonymizer import load_mapping, save_mapping
 
 
 runner = CliRunner()
@@ -102,8 +102,8 @@ def sample_docx_no_pii(tmp_path):
     return docx_path
 
 
-class TestDocumentAnonymizer:
-    """DocumentAnonymizerのテスト"""
+class TestDocumentPseudonymizer:
+    """DocumentPseudonymizerのテスト"""
 
     def test_scan_docx(self, sample_docx):
         """Word文書のスキャン"""
@@ -136,17 +136,17 @@ class TestDocumentAnonymizer:
         assert result.file_type == "docx"
         assert result.total_matches == 0
 
-    def test_anonymize_docx(self, sample_docx, tmp_path):
-        """Word文書の匿名化"""
-        output_path = tmp_path / "anonymized.docx"
-        result, mapping = anonymize_document(sample_docx, output_path, "replace")
+    def test_pseudonymize_docx(self, sample_docx, tmp_path):
+        """Word文書の仮名化"""
+        output_path = tmp_path / "pseudonymized.docx"
+        result, mapping = pseudonymize_document(sample_docx, output_path, "replace")
 
         assert output_path.exists()
         assert result.total_matches > 0
         assert "values" in mapping
         assert len(mapping["values"]) > 0
 
-        # 匿名化されたファイルを読み込んで確認
+        # 仮名化されたファイルを読み込んで確認
         doc = Document(output_path)
         full_text = "\n".join([p.text for p in doc.paragraphs])
         # セマンティックID（PHONE_, EMAIL_, ADDR_など）が含まれていることを確認
@@ -154,33 +154,33 @@ class TestDocumentAnonymizer:
         # 元の電話番号がないことを確認
         assert "090-1234-5678" not in full_text
 
-    def test_anonymize_docx_generalize(self, sample_docx, tmp_path):
-        """一般化戦略での匿名化"""
+    def test_pseudonymize_docx_generalize(self, sample_docx, tmp_path):
+        """一般化戦略での仮名化"""
         output_path = tmp_path / "generalized.docx"
-        result, mapping = anonymize_document(sample_docx, output_path, "generalize")
+        result, mapping = pseudonymize_document(sample_docx, output_path, "generalize")
 
         assert output_path.exists()
         assert result.total_matches > 0
 
-    def test_anonymize_pptx(self, sample_pptx, tmp_path):
-        """PowerPointの匿名化"""
-        output_path = tmp_path / "anonymized.pptx"
-        result, mapping = anonymize_document(sample_pptx, output_path, "replace")
+    def test_pseudonymize_pptx(self, sample_pptx, tmp_path):
+        """PowerPointの仮名化"""
+        output_path = tmp_path / "pseudonymized.pptx"
+        result, mapping = pseudonymize_document(sample_pptx, output_path, "replace")
 
         assert output_path.exists()
         assert result.total_matches > 0
         assert "values" in mapping
 
-    def test_deanonymize_docx(self, sample_docx, tmp_path):
+    def test_restore_docx(self, sample_docx, tmp_path):
         """Word文書の復元"""
-        anonymized_path = tmp_path / "anonymized.docx"
+        pseudonymized_path = tmp_path / "pseudonymized.docx"
         restored_path = tmp_path / "restored.docx"
 
-        # 匿名化
-        result, mapping = anonymize_document(sample_docx, anonymized_path, "replace")
+        # 仮名化
+        result, mapping = pseudonymize_document(sample_docx, pseudonymized_path, "replace")
 
         # 復元
-        deanonymize_document(anonymized_path, restored_path, mapping)
+        restore_document(pseudonymized_path, restored_path, mapping)
 
         assert restored_path.exists()
 
@@ -190,16 +190,16 @@ class TestDocumentAnonymizer:
         # 元の電話番号が復元されていることを確認
         assert "090-1234-5678" in full_text
 
-    def test_deanonymize_pptx(self, sample_pptx, tmp_path):
+    def test_restore_pptx(self, sample_pptx, tmp_path):
         """PowerPointの復元"""
-        anonymized_path = tmp_path / "anonymized.pptx"
+        pseudonymized_path = tmp_path / "pseudonymized.pptx"
         restored_path = tmp_path / "restored.pptx"
 
-        # 匿名化
-        result, mapping = anonymize_document(sample_pptx, anonymized_path, "replace")
+        # 仮名化
+        result, mapping = pseudonymize_document(sample_pptx, pseudonymized_path, "replace")
 
         # 復元
-        deanonymize_document(anonymized_path, restored_path, mapping)
+        restore_document(pseudonymized_path, restored_path, mapping)
 
         assert restored_path.exists()
 
@@ -245,15 +245,15 @@ class TestScanDocCommand:
         assert "サポートされていない" in result.output
 
 
-class TestAnonymizeDocCommand:
-    """anonymize-doc コマンドのテスト"""
+class TestPseudonymizeDocCommand:
+    """pseudonymize-doc コマンドのテスト"""
 
-    def test_anonymize_doc_basic(self, sample_docx, tmp_path):
-        """基本的な匿名化"""
-        output_path = tmp_path / "output" / "anonymized.docx"
+    def test_pseudonymize_doc_basic(self, sample_docx, tmp_path):
+        """基本的な仮名化"""
+        output_path = tmp_path / "output" / "pseudonymized.docx"
 
         result = runner.invoke(app, [
-            "anonymize-doc",
+            "pseudonymize-doc",
             str(sample_docx),
             "-o", str(output_path),
             "-p", "testpassword123",
@@ -261,14 +261,14 @@ class TestAnonymizeDocCommand:
 
         assert result.exit_code == 0
         assert output_path.exists()
-        assert (tmp_path / "output" / "anonymized.mapping.enc").exists()
+        assert (tmp_path / "output" / "pseudonymized.mapping.enc").exists()
 
-    def test_anonymize_doc_pptx(self, sample_pptx, tmp_path):
-        """PowerPointの匿名化"""
-        output_path = tmp_path / "output" / "anonymized.pptx"
+    def test_pseudonymize_doc_pptx(self, sample_pptx, tmp_path):
+        """PowerPointの仮名化"""
+        output_path = tmp_path / "output" / "pseudonymized.pptx"
 
         result = runner.invoke(app, [
-            "anonymize-doc",
+            "pseudonymize-doc",
             str(sample_pptx),
             "-o", str(output_path),
             "-p", "testpassword123",
@@ -277,12 +277,12 @@ class TestAnonymizeDocCommand:
         assert result.exit_code == 0
         assert output_path.exists()
 
-    def test_anonymize_doc_generalize(self, sample_docx, tmp_path):
+    def test_pseudonymize_doc_generalize(self, sample_docx, tmp_path):
         """一般化戦略"""
         output_path = tmp_path / "output" / "generalized.docx"
 
         result = runner.invoke(app, [
-            "anonymize-doc",
+            "pseudonymize-doc",
             str(sample_docx),
             "-o", str(output_path),
             "-p", "testpassword123",
@@ -297,18 +297,18 @@ class TestRestoreDocCommand:
 
     def test_restore_doc_basic(self, sample_docx, tmp_path):
         """基本的な復元"""
-        # まず匿名化
-        anonymized_path = tmp_path / "anonymized.docx"
-        mapping_path = tmp_path / "anonymized.mapping.enc"
+        # まず仮名化
+        pseudonymized_path = tmp_path / "pseudonymized.docx"
+        mapping_path = tmp_path / "pseudonymized.mapping.enc"
 
-        result, mapping = anonymize_document(sample_docx, anonymized_path, "replace")
+        result, mapping = pseudonymize_document(sample_docx, pseudonymized_path, "replace")
         save_mapping(mapping, mapping_path, "testpassword123")
 
         # 復元
         restored_path = tmp_path / "restored.docx"
         result = runner.invoke(app, [
             "restore-doc",
-            str(anonymized_path),
+            str(pseudonymized_path),
             "-m", str(mapping_path),
             "-o", str(restored_path),
             "-p", "testpassword123",
@@ -323,12 +323,12 @@ class TestMappingPersistence:
 
     def test_mapping_save_load(self, sample_docx, tmp_path):
         """マッピングの保存と読み込み"""
-        anonymized_path = tmp_path / "anonymized.docx"
+        pseudonymized_path = tmp_path / "pseudonymized.docx"
         mapping_path = tmp_path / "test.mapping.enc"
         password = "testpassword123"
 
-        # 匿名化してマッピング取得
-        result, mapping = anonymize_document(sample_docx, anonymized_path, "replace")
+        # 仮名化してマッピング取得
+        result, mapping = pseudonymize_document(sample_docx, pseudonymized_path, "replace")
 
         # マッピング保存
         save_mapping(mapping, mapping_path, password)
@@ -340,10 +340,10 @@ class TestMappingPersistence:
 
     def test_mapping_wrong_password(self, sample_docx, tmp_path):
         """間違ったパスワード"""
-        anonymized_path = tmp_path / "anonymized.docx"
+        pseudonymized_path = tmp_path / "pseudonymized.docx"
         mapping_path = tmp_path / "test.mapping.enc"
 
-        result, mapping = anonymize_document(sample_docx, anonymized_path, "replace")
+        result, mapping = pseudonymize_document(sample_docx, pseudonymized_path, "replace")
         save_mapping(mapping, mapping_path, "correctpassword")
 
         # 間違ったパスワードで読み込み

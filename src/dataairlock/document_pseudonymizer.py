@@ -1,4 +1,4 @@
-"""Word/PowerPointドキュメント匿名化モジュール"""
+"""Word/PowerPointドキュメント仮名化モジュール"""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,7 +12,7 @@ from pptx import Presentation
 from pptx.shapes.base import BaseShape
 from pptx.util import Inches
 
-from .anonymizer import (
+from .pseudonymizer import (
     PIIDetector,
     PIIType,
     PIIValueResult,
@@ -47,8 +47,8 @@ class DocumentPIIResult:
     sample_matches: list[TextMatch] = field(default_factory=list)
 
 
-class DocumentAnonymizer:
-    """Word/PowerPointドキュメント匿名化クラス"""
+class DocumentPseudonymizer:
+    """Word/PowerPointドキュメント仮名化クラス"""
 
     def __init__(self):
         self.detector = PIIDetector()
@@ -117,12 +117,12 @@ class DocumentAnonymizer:
 
         return filtered
 
-    def _anonymize_text(
+    def _pseudonymize_text(
         self,
         text: str,
         strategy: Literal["replace", "generalize"] = "replace",
     ) -> tuple[str, list[TextMatch]]:
-        """テキスト内のPIIを匿名化"""
+        """テキスト内のPIIを仮名化"""
         if not text:
             return text, []
 
@@ -153,8 +153,8 @@ class DocumentAnonymizer:
 
         return result_text, matches
 
-    def _deanonymize_text(self, text: str, mapping: dict) -> str:
-        """テキスト内の匿名化を解除"""
+    def _restore_text(self, text: str, mapping: dict) -> str:
+        """テキスト内の仮名化を解除"""
         if not text:
             return text
 
@@ -241,30 +241,30 @@ class DocumentAnonymizer:
             sample_matches=sample_matches,
         )
 
-    def _anonymize_paragraph(
+    def _pseudonymize_paragraph(
         self,
         para: Paragraph,
         strategy: Literal["replace", "generalize"] = "replace",
     ) -> list[TextMatch]:
-        """段落内のテキストを匿名化（書式を保持）"""
+        """段落内のテキストを仮名化（書式を保持）"""
         matches: list[TextMatch] = []
 
         # 各runの処理
         for run in para.runs:
             if run.text:
-                new_text, run_matches = self._anonymize_text(run.text, strategy)
+                new_text, run_matches = self._pseudonymize_text(run.text, strategy)
                 run.text = new_text
                 matches.extend(run_matches)
 
         return matches
 
-    def anonymize_docx(
+    def pseudonymize_docx(
         self,
         input_path: str | Path,
         output_path: str | Path,
         strategy: Literal["replace", "generalize"] = "replace",
     ) -> tuple[DocumentPIIResult, dict]:
-        """Wordファイルを匿名化"""
+        """Wordファイルを仮名化"""
         input_path = Path(input_path)
         output_path = Path(output_path)
 
@@ -281,7 +281,7 @@ class DocumentAnonymizer:
 
         # 本文段落
         for para in doc.paragraphs:
-            matches = self._anonymize_paragraph(para, strategy)
+            matches = self._pseudonymize_paragraph(para, strategy)
             all_matches.extend(matches)
 
         # テーブル
@@ -289,7 +289,7 @@ class DocumentAnonymizer:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
-                        matches = self._anonymize_paragraph(para, strategy)
+                        matches = self._pseudonymize_paragraph(para, strategy)
                         all_matches.extend(matches)
 
         # ヘッダー・フッター
@@ -297,13 +297,13 @@ class DocumentAnonymizer:
             for header in [section.header, section.first_page_header, section.even_page_header]:
                 if header:
                     for para in header.paragraphs:
-                        matches = self._anonymize_paragraph(para, strategy)
+                        matches = self._pseudonymize_paragraph(para, strategy)
                         all_matches.extend(matches)
 
             for footer in [section.footer, section.first_page_footer, section.even_page_footer]:
                 if footer:
                     for para in footer.paragraphs:
-                        matches = self._anonymize_paragraph(para, strategy)
+                        matches = self._pseudonymize_paragraph(para, strategy)
                         all_matches.extend(matches)
 
         # PIIタイプ別集計
@@ -338,13 +338,13 @@ class DocumentAnonymizer:
 
         return result, mapping
 
-    def deanonymize_docx(
+    def restore_docx(
         self,
         input_path: str | Path,
         output_path: str | Path,
         mapping: dict,
     ) -> None:
-        """Wordファイルの匿名化を解除"""
+        """Wordファイルの仮名化を解除"""
         input_path = Path(input_path)
         output_path = Path(output_path)
 
@@ -354,7 +354,7 @@ class DocumentAnonymizer:
         for para in doc.paragraphs:
             for run in para.runs:
                 if run.text:
-                    run.text = self._deanonymize_text(run.text, mapping)
+                    run.text = self._restore_text(run.text, mapping)
 
         # テーブル
         for table in doc.tables:
@@ -363,7 +363,7 @@ class DocumentAnonymizer:
                     for para in cell.paragraphs:
                         for run in para.runs:
                             if run.text:
-                                run.text = self._deanonymize_text(run.text, mapping)
+                                run.text = self._restore_text(run.text, mapping)
 
         # ヘッダー・フッター
         for section in doc.sections:
@@ -372,14 +372,14 @@ class DocumentAnonymizer:
                     for para in header.paragraphs:
                         for run in para.runs:
                             if run.text:
-                                run.text = self._deanonymize_text(run.text, mapping)
+                                run.text = self._restore_text(run.text, mapping)
 
             for footer in [section.footer, section.first_page_footer, section.even_page_footer]:
                 if footer:
                     for para in footer.paragraphs:
                         for run in para.runs:
                             if run.text:
-                                run.text = self._deanonymize_text(run.text, mapping)
+                                run.text = self._restore_text(run.text, mapping)
 
         doc.save(output_path)
 
@@ -465,30 +465,30 @@ class DocumentAnonymizer:
             sample_matches=sample_matches,
         )
 
-    def _anonymize_text_frame(
+    def _pseudonymize_text_frame(
         self,
         text_frame,
         strategy: Literal["replace", "generalize"] = "replace",
     ) -> list[TextMatch]:
-        """テキストフレーム内を匿名化"""
+        """テキストフレーム内を仮名化"""
         all_matches: list[TextMatch] = []
 
         for para in text_frame.paragraphs:
             for run in para.runs:
                 if run.text:
-                    new_text, matches = self._anonymize_text(run.text, strategy)
+                    new_text, matches = self._pseudonymize_text(run.text, strategy)
                     run.text = new_text
                     all_matches.extend(matches)
 
         return all_matches
 
-    def anonymize_pptx(
+    def pseudonymize_pptx(
         self,
         input_path: str | Path,
         output_path: str | Path,
         strategy: Literal["replace", "generalize"] = "replace",
     ) -> tuple[DocumentPIIResult, dict]:
-        """PowerPointファイルを匿名化"""
+        """PowerPointファイルを仮名化"""
         input_path = Path(input_path)
         output_path = Path(output_path)
 
@@ -506,7 +506,7 @@ class DocumentAnonymizer:
         for slide in prs.slides:
             for shape in slide.shapes:
                 if shape.has_text_frame:
-                    matches = self._anonymize_text_frame(shape.text_frame, strategy)
+                    matches = self._pseudonymize_text_frame(shape.text_frame, strategy)
                     all_matches.extend(matches)
 
                 # テーブルの処理
@@ -515,7 +515,7 @@ class DocumentAnonymizer:
                     for row in table.rows:
                         for cell in row.cells:
                             if cell.text_frame:
-                                matches = self._anonymize_text_frame(cell.text_frame, strategy)
+                                matches = self._pseudonymize_text_frame(cell.text_frame, strategy)
                                 all_matches.extend(matches)
 
             # ノートの処理
@@ -523,7 +523,7 @@ class DocumentAnonymizer:
                 notes_slide = slide.notes_slide
                 for shape in notes_slide.shapes:
                     if shape.has_text_frame:
-                        matches = self._anonymize_text_frame(shape.text_frame, strategy)
+                        matches = self._pseudonymize_text_frame(shape.text_frame, strategy)
                         all_matches.extend(matches)
 
         # PIIタイプ別集計
@@ -558,13 +558,13 @@ class DocumentAnonymizer:
 
         return result, mapping
 
-    def deanonymize_pptx(
+    def restore_pptx(
         self,
         input_path: str | Path,
         output_path: str | Path,
         mapping: dict,
     ) -> None:
-        """PowerPointファイルの匿名化を解除"""
+        """PowerPointファイルの仮名化を解除"""
         input_path = Path(input_path)
         output_path = Path(output_path)
 
@@ -576,7 +576,7 @@ class DocumentAnonymizer:
                     for para in shape.text_frame.paragraphs:
                         for run in para.runs:
                             if run.text:
-                                run.text = self._deanonymize_text(run.text, mapping)
+                                run.text = self._restore_text(run.text, mapping)
 
                 if shape.has_table:
                     table = shape.table
@@ -586,7 +586,7 @@ class DocumentAnonymizer:
                                 for para in cell.text_frame.paragraphs:
                                     for run in para.runs:
                                         if run.text:
-                                            run.text = self._deanonymize_text(run.text, mapping)
+                                            run.text = self._restore_text(run.text, mapping)
 
             if slide.has_notes_slide:
                 notes_slide = slide.notes_slide
@@ -595,7 +595,7 @@ class DocumentAnonymizer:
                         for para in shape.text_frame.paragraphs:
                             for run in para.runs:
                                 if run.text:
-                                    run.text = self._deanonymize_text(run.text, mapping)
+                                    run.text = self._restore_text(run.text, mapping)
 
         prs.save(output_path)
 
@@ -605,50 +605,50 @@ class DocumentAnonymizer:
 def scan_document(file_path: str | Path) -> DocumentPIIResult:
     """ドキュメントファイル内のPIIをスキャン"""
     file_path = Path(file_path)
-    anonymizer = DocumentAnonymizer()
+    pseudonymizer = DocumentPseudonymizer()
 
     suffix = file_path.suffix.lower()
     if suffix == ".docx":
-        return anonymizer.scan_docx(file_path)
+        return pseudonymizer.scan_docx(file_path)
     elif suffix == ".pptx":
-        return anonymizer.scan_pptx(file_path)
+        return pseudonymizer.scan_pptx(file_path)
     else:
         raise ValueError(f"サポートされていないファイル形式: {suffix}")
 
 
-def anonymize_document(
+def pseudonymize_document(
     input_path: str | Path,
     output_path: str | Path,
     strategy: Literal["replace", "generalize"] = "replace",
 ) -> tuple[DocumentPIIResult, dict]:
-    """ドキュメントファイルを匿名化"""
+    """ドキュメントファイルを仮名化"""
     input_path = Path(input_path)
     output_path = Path(output_path)
-    anonymizer = DocumentAnonymizer()
+    pseudonymizer = DocumentPseudonymizer()
 
     suffix = input_path.suffix.lower()
     if suffix == ".docx":
-        return anonymizer.anonymize_docx(input_path, output_path, strategy)
+        return pseudonymizer.pseudonymize_docx(input_path, output_path, strategy)
     elif suffix == ".pptx":
-        return anonymizer.anonymize_pptx(input_path, output_path, strategy)
+        return pseudonymizer.pseudonymize_pptx(input_path, output_path, strategy)
     else:
         raise ValueError(f"サポートされていないファイル形式: {suffix}")
 
 
-def deanonymize_document(
+def restore_document(
     input_path: str | Path,
     output_path: str | Path,
     mapping: dict,
 ) -> None:
-    """ドキュメントファイルの匿名化を解除"""
+    """ドキュメントファイルの仮名化を解除"""
     input_path = Path(input_path)
     output_path = Path(output_path)
-    anonymizer = DocumentAnonymizer()
+    pseudonymizer = DocumentPseudonymizer()
 
     suffix = input_path.suffix.lower()
     if suffix == ".docx":
-        anonymizer.deanonymize_docx(input_path, output_path, mapping)
+        pseudonymizer.restore_docx(input_path, output_path, mapping)
     elif suffix == ".pptx":
-        anonymizer.deanonymize_pptx(input_path, output_path, mapping)
+        pseudonymizer.restore_pptx(input_path, output_path, mapping)
     else:
         raise ValueError(f"サポートされていないファイル形式: {suffix}")

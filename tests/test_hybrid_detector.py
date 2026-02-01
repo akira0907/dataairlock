@@ -14,7 +14,7 @@ from dataairlock.hybrid_detector import (
     detect_pii_hybrid,
     LLM_TYPE_TO_PII_TYPE,
 )
-from dataairlock.anonymizer import PIIType, Confidence, PIIColumnResult
+from dataairlock.pseudonymizer import PIIType, Confidence, PIIColumnResult
 
 
 class TestDetectionMode:

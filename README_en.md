@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://pypi.org/project/dataairlock/"><img src="https://img.shields.io/pypi/v/dataairlock" alt="PyPI version"></a>
   <a href="https://pypi.org/project/dataairlock/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python"></a>
-  <img src="https://img.shields.io/badge/license-AGPL%20v3.0-green" alt="License">
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/security-local--only-brightgreen" alt="Security">
   <img src="https://img.shields.io/badge/status-beta-orange" alt="Status">
 </p>
@@ -354,7 +354,7 @@ pytest
 
 ## License
 
-AGPL-3.0
+MIT
 
 ---
 

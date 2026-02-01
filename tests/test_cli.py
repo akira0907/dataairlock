@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dataairlock.cli import app, generate_prompt_file, load_dataframe, save_dataframe
-from dataairlock.anonymizer import save_mapping
+from dataairlock.pseudonymizer import save_mapping
 
 
 runner = CliRunner()
@@ -30,11 +30,11 @@ def sample_csv(tmp_path):
 
 
 @pytest.fixture
-def anonymized_data(tmp_path, sample_csv):
-    """匿名化済みデータとマッピングを作成"""
-    # 匿名化実行
+def pseudonymized_data(tmp_path, sample_csv):
+    """仮名化済みデータとマッピングを作成"""
+    # 仮名化実行
     result = runner.invoke(app, [
-        "anonymize",
+        "pseudonymize",
         str(sample_csv),
         "-o", str(tmp_path / "output"),
         "-p", "testpassword123",
@@ -43,7 +43,7 @@ def anonymized_data(tmp_path, sample_csv):
     assert result.exit_code == 0
 
     return {
-        "csv": tmp_path / "output" / "anonymized.csv",
+        "csv": tmp_path / "output" / "pseudonymized.csv",
         "mapping": tmp_path / "output" / "mapping.enc",
         "prompt": tmp_path / "output" / "prompt.txt",
         "password": "testpassword123",
@@ -84,15 +84,15 @@ class TestScanCommand:
         assert "個人情報なし" in result.output or "検出されませんでした" in result.output
 
 
-class TestAnonymizeCommand:
-    """anonymize コマンドのテスト"""
+class TestPseudonymizeCommand:
+    """pseudonymize コマンドのテスト"""
 
-    def test_anonymize_auto(self, sample_csv, tmp_path):
-        """自動モードでの匿名化"""
+    def test_pseudonymize_auto(self, sample_csv, tmp_path):
+        """自動モードでの仮名化"""
         output_dir = tmp_path / "output"
 
         result = runner.invoke(app, [
-            "anonymize",
+            "pseudonymize",
             str(sample_csv),
             "-o", str(output_dir),
             "-p", "testpassword123",
@@ -100,19 +100,19 @@ class TestAnonymizeCommand:
         ])
 
         assert result.exit_code == 0
-        assert "匿名化が完了しました" in result.output
+        assert "仮名化が完了しました" in result.output
 
         # 出力ファイルの確認
-        assert (output_dir / "anonymized.csv").exists()
+        assert (output_dir / "pseudonymized.csv").exists()
         assert (output_dir / "mapping.enc").exists()
         assert (output_dir / "prompt.txt").exists()
 
-    def test_anonymize_output_content(self, sample_csv, tmp_path):
-        """匿名化された内容の確認"""
+    def test_pseudonymize_output_content(self, sample_csv, tmp_path):
+        """仮名化された内容の確認"""
         output_dir = tmp_path / "output"
 
         runner.invoke(app, [
-            "anonymize",
+            "pseudonymize",
             str(sample_csv),
             "-o", str(output_dir),
             "-p", "testpassword123",
@@ -120,7 +120,7 @@ class TestAnonymizeCommand:
         ])
 
         # CSVの内容確認
-        anon_df = pd.read_csv(output_dir / "anonymized.csv")
+        anon_df = pd.read_csv(output_dir / "pseudonymized.csv")
 
         # 元の値が残っていないことを確認
         assert "P001" not in anon_df["患者ID"].values
@@ -129,12 +129,12 @@ class TestAnonymizeCommand:
         # セマンティックIDで始まる値があることを確認
         assert any(str(v).startswith("PATIENT_") for v in anon_df["患者ID"].values)
 
-    def test_anonymize_generalize_strategy(self, sample_csv, tmp_path):
+    def test_pseudonymize_generalize_strategy(self, sample_csv, tmp_path):
         """generalize戦略"""
         output_dir = tmp_path / "output"
 
         result = runner.invoke(app, [
-            "anonymize",
+            "pseudonymize",
             str(sample_csv),
             "-o", str(output_dir),
             "-p", "testpassword123",
@@ -144,16 +144,16 @@ class TestAnonymizeCommand:
 
         assert result.exit_code == 0
 
-        anon_df = pd.read_csv(output_dir / "anonymized.csv")
+        anon_df = pd.read_csv(output_dir / "pseudonymized.csv")
 
         # 住所が都道府県に一般化されていることを確認
         assert "東京都" in anon_df["住所"].values
         assert "大阪府" in anon_df["住所"].values
 
-    def test_anonymize_file_not_found(self, tmp_path):
+    def test_pseudonymize_file_not_found(self, tmp_path):
         """存在しないファイル"""
         result = runner.invoke(app, [
-            "anonymize",
+            "pseudonymize",
             str(tmp_path / "nonexistent.csv"),
             "-p", "testpassword",
         ])
@@ -161,10 +161,10 @@ class TestAnonymizeCommand:
         assert result.exit_code == 1
         assert "ファイルが見つかりません" in result.output
 
-    def test_anonymize_invalid_strategy(self, sample_csv, tmp_path):
+    def test_pseudonymize_invalid_strategy(self, sample_csv, tmp_path):
         """無効な戦略"""
         result = runner.invoke(app, [
-            "anonymize",
+            "pseudonymize",
             str(sample_csv),
             "-o", str(tmp_path),
             "-p", "testpassword",
@@ -175,12 +175,12 @@ class TestAnonymizeCommand:
         assert result.exit_code == 1
         assert "無効な戦略" in result.output
 
-    def test_anonymize_prompt_file_content(self, sample_csv, tmp_path):
+    def test_pseudonymize_prompt_file_content(self, sample_csv, tmp_path):
         """プロンプトファイルの内容確認"""
         output_dir = tmp_path / "output"
 
         runner.invoke(app, [
-            "anonymize",
+            "pseudonymize",
             str(sample_csv),
             "-o", str(output_dir),
             "-p", "testpassword123",
@@ -189,7 +189,7 @@ class TestAnonymizeCommand:
 
         prompt_content = (output_dir / "prompt.txt").read_text(encoding="utf-8")
 
-        assert "匿名化済みデータ" in prompt_content
+        assert "仮名化済みデータ" in prompt_content
         assert "test_data.csv" in prompt_content
         assert "ANON_" in prompt_content
 
@@ -197,15 +197,15 @@ class TestAnonymizeCommand:
 class TestRestoreCommand:
     """restore コマンドのテスト"""
 
-    def test_restore_basic(self, anonymized_data, tmp_path):
+    def test_restore_basic(self, pseudonymized_data, tmp_path):
         """基本的な復元"""
         output_path = tmp_path / "restored.csv"
 
         result = runner.invoke(app, [
             "restore",
-            str(anonymized_data["csv"]),
-            "-m", str(anonymized_data["mapping"]),
-            "-p", anonymized_data["password"],
+            str(pseudonymized_data["csv"]),
+            "-m", str(pseudonymized_data["mapping"]),
+            "-p", pseudonymized_data["password"],
             "-o", str(output_path),
         ])
 
@@ -213,15 +213,15 @@ class TestRestoreCommand:
         assert "復元が完了しました" in result.output
         assert output_path.exists()
 
-    def test_restore_content(self, anonymized_data, tmp_path):
+    def test_restore_content(self, pseudonymized_data, tmp_path):
         """復元内容の確認"""
         output_path = tmp_path / "restored.csv"
 
         runner.invoke(app, [
             "restore",
-            str(anonymized_data["csv"]),
-            "-m", str(anonymized_data["mapping"]),
-            "-p", anonymized_data["password"],
+            str(pseudonymized_data["csv"]),
+            "-m", str(pseudonymized_data["mapping"]),
+            "-p", pseudonymized_data["password"],
             "-o", str(output_path),
         ])
 
@@ -231,12 +231,12 @@ class TestRestoreCommand:
         assert "P001" in restored_df["患者ID"].values
         assert "山田太郎" in restored_df["氏名"].values
 
-    def test_restore_wrong_password(self, anonymized_data, tmp_path):
+    def test_restore_wrong_password(self, pseudonymized_data, tmp_path):
         """間違ったパスワード"""
         result = runner.invoke(app, [
             "restore",
-            str(anonymized_data["csv"]),
-            "-m", str(anonymized_data["mapping"]),
+            str(pseudonymized_data["csv"]),
+            "-m", str(pseudonymized_data["mapping"]),
             "-p", "wrongpassword",
             "-o", str(tmp_path / "restored.csv"),
         ])
@@ -244,11 +244,11 @@ class TestRestoreCommand:
         assert result.exit_code == 1
         assert "パスワードが正しくない" in result.output
 
-    def test_restore_missing_mapping(self, anonymized_data, tmp_path):
+    def test_restore_missing_mapping(self, pseudonymized_data, tmp_path):
         """マッピングファイルが存在しない"""
         result = runner.invoke(app, [
             "restore",
-            str(anonymized_data["csv"]),
+            str(pseudonymized_data["csv"]),
             "-m", str(tmp_path / "nonexistent.enc"),
             "-p", "testpassword",
         ])
@@ -294,7 +294,7 @@ class TestUtilityFunctions:
             original_filename="test.csv",
             row_count=100,
             columns=["患者ID", "氏名", "診断コード"],
-            anonymized_info=[
+            pseudonymized_info=[
                 {"column": "患者ID", "action": "replaced"},
                 {"column": "氏名", "action": "replaced"},
             ],
@@ -313,13 +313,13 @@ class TestHelpMessages:
         """メインヘルプ"""
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "anonymize" in result.output
+        assert "pseudonymize" in result.output
         assert "restore" in result.output
         assert "scan" in result.output
 
-    def test_anonymize_help(self):
-        """anonymizeヘルプ"""
-        result = runner.invoke(app, ["anonymize", "--help"])
+    def test_pseudonymize_help(self):
+        """pseudonymizeヘルプ"""
+        result = runner.invoke(app, ["pseudonymize", "--help"])
         assert result.exit_code == 0
         assert "--output" in result.output
         assert "--password" in result.output
@@ -383,7 +383,7 @@ class TestWorkspaceCommand:
         assert (airlock_path / ".gitignore").exists()
         assert (mappings_path / ".gitignore").exists()
 
-        # 匿名化ファイルの確認
+        # 仮名化ファイルの確認
         assert (airlock_path / "data" / "test_data.csv").exists()
         assert (mappings_path / "test_data.mapping.enc").exists()
 
@@ -486,7 +486,7 @@ class TestWorkspaceCommand:
             "-p", "testpassword123",
         ], input="r\nr\ng\ng\n")
 
-        # 匿名化されたファイルをoutputにコピー（Claude Codeの出力をシミュレート）
+        # 仮名化されたファイルをoutputにコピー（Claude Codeの出力をシミュレート）
         airlock_path = project_dir / ".airlock"
         output_dir = airlock_path / "output"
         shutil.copy(airlock_path / "data" / "test_data.csv", output_dir / "result.csv")
@@ -566,10 +566,10 @@ class TestWorkspaceCommand:
 
         assert "対象データ" in content
         assert "test_data" in content
-        assert "PERSON_001" in content or "匿名化ID" in content
+        assert "PERSON_001" in content or "仮名化ID" in content
 
-    def test_workspace_anonymized_content(self, tmp_path, sample_csv):
-        """匿名化されたファイルの内容確認"""
+    def test_workspace_pseudonymized_content(self, tmp_path, sample_csv):
+        """仮名化されたファイルの内容確認"""
         project_dir = tmp_path / "project"
         project_dir.mkdir()
 
@@ -587,7 +587,7 @@ class TestWorkspaceCommand:
             "-p", "testpassword123",
         ], input="r\nr\ng\ng\n")
 
-        # 匿名化ファイルの内容確認
+        # 仮名化ファイルの内容確認
         anon_path = project_dir / ".airlock" / "data" / "test_data.csv"
         anon_df = pd.read_csv(anon_path)
 
@@ -631,7 +631,7 @@ class TestWorkspaceCommand:
         ], input="r\nr\n")  # 患者ID, 氏名 の処理方法
 
         assert result.exit_code == 0
-        assert "2ファイルを匿名化しました" in result.output
+        assert "2ファイルを仮名化しました" in result.output
 
         # ファイルが作成されていることを確認
         airlock_path = project_dir / ".airlock"
@@ -641,7 +641,7 @@ class TestWorkspaceCommand:
         assert (mappings_path / "file1.mapping.enc").exists()
         assert (mappings_path / "file2.mapping.enc").exists()
 
-        # 匿名化されていることを確認
+        # 仮名化されていることを確認
         anon_df1 = pd.read_csv(airlock_path / "data" / "file1.csv")
         assert "P001" not in anon_df1["患者ID"].values
         assert any(str(v).startswith("PATIENT_") for v in anon_df1["患者ID"].values)
@@ -687,7 +687,7 @@ class TestWorkspaceCommand:
             "-p", "testpassword123",
         ], input="r\nr\n")
 
-        # 匿名化ファイルをoutputにコピー（Claude Codeの出力をシミュレート）
+        # 仮名化ファイルをoutputにコピー（Claude Codeの出力をシミュレート）
         airlock_path = project_dir / ".airlock"
         import shutil
         shutil.copy(airlock_path / "data" / "data.csv", airlock_path / "output" / "result1.csv")
@@ -998,7 +998,7 @@ class TestChatHelperFunctions:
     def test_load_all_mappings_new_location(self, tmp_path):
         """新しいマッピングディレクトリからの読み込み"""
         from dataairlock.cli import _load_all_mappings
-        from dataairlock.anonymizer import save_mapping
+        from dataairlock.pseudonymizer import save_mapping
 
         # 新しい場所にマッピングを作成
         new_mappings_dir = tmp_path / ".airlock_mappings"
@@ -1021,7 +1021,7 @@ class TestChatHelperFunctions:
     def test_load_all_mappings_old_location(self, tmp_path):
         """旧マッピングディレクトリからの読み込み"""
         from dataairlock.cli import _load_all_mappings
-        from dataairlock.anonymizer import save_mapping
+        from dataairlock.pseudonymizer import save_mapping
 
         # 旧場所にマッピングを作成
         old_mappings_dir = tmp_path / ".airlock" / ".mapping"
@@ -1044,7 +1044,7 @@ class TestChatHelperFunctions:
     def test_load_all_mappings_both_locations(self, tmp_path):
         """新旧両方のマッピングディレクトリからの読み込み"""
         from dataairlock.cli import _load_all_mappings, _get_all_mapping_dirs
-        from dataairlock.anonymizer import save_mapping
+        from dataairlock.pseudonymizer import save_mapping
 
         # 新しい場所にマッピングを作成
         new_mappings_dir = tmp_path / ".airlock_mappings"
@@ -1143,7 +1143,7 @@ class TestWrapCommand:
         """wrapコマンドのヘルプ"""
         result = runner.invoke(app, ["wrap", "--help"])
         assert result.exit_code == 0
-        assert "匿名化レイヤー" in result.output or "CLI" in result.output
+        assert "仮名化レイヤー" in result.output or "CLI" in result.output
         assert "--command" in result.output
         assert "--auto-restore" in result.output
         assert "--shell" in result.output

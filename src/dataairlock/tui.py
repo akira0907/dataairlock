@@ -15,11 +15,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from dataairlock.anonymizer import (
+from dataairlock.pseudonymizer import (
     PIIType,
-    anonymize_dataframe,
+    pseudonymize_dataframe,
     check_collision,
-    deanonymize_dataframe,
+    restore_dataframe,
     detect_pii_columns,
     generate_session_id,
     load_mapping,
@@ -232,7 +232,7 @@ def show_status(project_dir: Path) -> bool:
     # ファイル一覧
     table = Table(title="登録ファイル", show_header=True)
     table.add_column("ファイル名")
-    table.add_column("匿名化列")
+    table.add_column("仮名化列")
 
     for file_name, file_info in config.get("files", {}).items():
         pii_cols = ", ".join(file_info.get("pii_columns", [])) or "なし"
@@ -530,7 +530,7 @@ def restore_results(project_dir: Path, password: str) -> bool:
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             df = pd.read_csv(csv_file)
-            restored_df = deanonymize_dataframe(df, all_mappings)
+            restored_df = depseudonymize_dataframe(df, all_mappings)
             save_dataframe(restored_df, output_path)
             console.print(f"  [green]✓[/green] {rel_path}")
             restored_count += 1
@@ -562,7 +562,7 @@ def _generate_mapping_report(mappings: dict, output_path: Path, title: str = "Da
         f"生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "=" * 60,
         "",
-        "このファイルには匿名化IDと元の値の対応表が含まれています。",
+        "このファイルには仮名化IDと元の値の対応表が含まれています。",
         "⚠️ 機密情報が含まれるため、取り扱いに注意してください。",
         "",
     ]
@@ -586,8 +586,8 @@ def _generate_mapping_report(mappings: dict, output_path: Path, title: str = "Da
         if "mapping" in col_info and isinstance(col_info["mapping"], dict):
             lines.append("")
             lines.append("マッピング:")
-            for original, anonymized in col_info["mapping"].items():
-                lines.append(f"  {anonymized} → {original}")
+            for original, pseudonymized in col_info["mapping"].items():
+                lines.append(f"  {pseudonymized} → {original}")
 
         lines.append("")
 
@@ -595,13 +595,13 @@ def _generate_mapping_report(mappings: dict, output_path: Path, title: str = "Da
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _generate_anonymization_report(
+def _generate_pseudonymization_report(
     project_dir: Path,
     all_file_mappings: list[dict],
     password: str,
 ) -> Path:
     """
-    匿名化時にマッピングレポートを生成（プロジェクトルートに配置）
+    仮名化時にマッピングレポートを生成（プロジェクトルートに配置）
 
     Args:
         project_dir: プロジェクトディレクトリ
@@ -613,12 +613,12 @@ def _generate_anonymization_report(
     """
     lines = [
         "=" * 70,
-        "DataAirlock 匿名化マッピングレポート",
+        "DataAirlock 仮名化マッピングレポート",
         f"生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "=" * 70,
         "",
-        "このファイルには匿名化IDと元の値の対応表が含まれています。",
-        "AIツールに指示を出すとき、匿名化IDを使って具体的な指示ができます。",
+        "このファイルには仮名化IDと元の値の対応表が含まれています。",
+        "AIツールに指示を出すとき、仮名化IDを使って具体的な指示ができます。",
         "",
         "例: 「PERSON_001 の来院回数を集計してください」",
         "",
@@ -627,7 +627,7 @@ def _generate_anonymization_report(
     ]
 
     # 各ファイルのマッピングを統合して出力
-    seen_mappings: dict[str, dict] = {}  # col_name -> {anonymized -> original}
+    seen_mappings: dict[str, dict] = {}  # col_name -> {pseudonymized -> original}
 
     for file_mapping in all_file_mappings:
         for col_name, col_info in file_mapping.items():
@@ -645,8 +645,8 @@ def _generate_anonymization_report(
 
             # valuesマッピングを追加（CSV/Excelファイル用）
             if "values" in col_info and isinstance(col_info["values"], dict):
-                for original, anonymized in col_info["values"].items():
-                    seen_mappings[col_name]["mapping"][anonymized] = original
+                for original, pseudonymized in col_info["values"].items():
+                    seen_mappings[col_name]["mapping"][pseudonymized] = original
 
     # マッピングを出力
     for col_name, info in seen_mappings.items():
@@ -657,14 +657,14 @@ def _generate_anonymization_report(
         lines.append(f"【{col_name}】 ({info.get('pii_type', '不明')})")
         lines.append("")
 
-        for anonymized, original in sorted(info["mapping"].items()):
-            lines.append(f"  {anonymized:30} → {original}")
+        for pseudonymized, original in sorted(info["mapping"].items()):
+            lines.append(f"  {pseudonymized:30} → {original}")
 
         lines.append("")
 
     # ファイルがない場合
     if not seen_mappings:
-        lines.append("(匿名化されたデータはありません)")
+        lines.append("(仮名化されたデータはありません)")
         lines.append("")
 
     # ファイル書き込み（プロジェクトルートに配置）
@@ -767,8 +767,8 @@ def flow_new_project():
     if not password:
         return
 
-    # 匿名化実行
-    console.print("\n[bold]匿名化を実行中...[/bold]")
+    # 仮名化実行
+    console.print("\n[bold]仮名化を実行中...[/bold]")
 
     airlock_path = _init_workspace(project_dir)
 
@@ -778,7 +778,7 @@ def flow_new_project():
         "files": {},
     }
 
-    anonymized_df = df.copy()
+    pseudonymized_df = df.copy()
     full_mapping: dict = {
         "metadata": {
             "created_at": datetime.now().isoformat(),
@@ -794,8 +794,8 @@ def flow_new_project():
         result = pii_columns[col_name]
         single_col_pii = {col_name: result}
 
-        anonymized_df, col_mapping = anonymize_dataframe(
-            anonymized_df,
+        pseudonymized_df, col_mapping = pseudonymize_dataframe(
+            pseudonymized_df,
             single_col_pii,
             strategy=action,
         )
@@ -809,7 +809,7 @@ def flow_new_project():
     mapping_output = _get_mappings_path(project_dir) / f"{file_stem}.mapping.enc"
 
     data_output.parent.mkdir(parents=True, exist_ok=True)
-    save_dataframe(anonymized_df, data_output)
+    save_dataframe(pseudonymized_df, data_output)
     save_mapping(full_mapping, mapping_output, password)
 
     # 設定保存
@@ -821,7 +821,7 @@ def flow_new_project():
     _save_workspace_config(project_dir, config)
 
     # マッピングレポート生成（プロジェクトルートに配置）
-    report_path = _generate_anonymization_report(project_dir, [full_mapping], password)
+    report_path = _generate_pseudonymization_report(project_dir, [full_mapping], password)
     console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
 
     console.print()
@@ -956,9 +956,9 @@ def show_help():
     console.print(Panel(
         "[bold]DataAirlock の使い方[/bold]\n\n"
         "1. [cyan]フォルダから開始（推奨）[/cyan]\n"
-        "   → フォルダを選択し、複数ファイルを一括匿名化\n\n"
+        "   → フォルダを選択し、複数ファイルを一括仮名化\n\n"
         "2. [cyan]ファイルから開始[/cyan]\n"
-        "   → 単一ファイルを選択し、個人情報を匿名化\n\n"
+        "   → 単一ファイルを選択し、個人情報を仮名化\n\n"
         "3. [cyan]AIツールを起動[/cyan]\n"
         "   → Claude Code / Codex CLI / Aider などで分析\n\n"
         "4. [cyan]結果を復元[/cyan]\n"
@@ -1394,13 +1394,13 @@ def generate_airlock_docs(airlock_path: Path, files: list, session_id: str = "")
     readme_content = f"""# DataAirlock Workspace
 
 このディレクトリはDataAirlockによって生成された**セキュアな作業環境**です。
-個人情報は匿名化されており、安全にAIツールで分析できます。
+個人情報は仮名化されており、安全にAIツールで分析できます。
 
 ## ディレクトリ構造
 
 ```
 .airlock/
-├── data/           # 匿名化済みデータ（AIに渡してOK）
+├── data/           # 仮名化済みデータ（AIに渡してOK）
 ├── output/         # 分析結果の出力先
 ├── CLAUDE.md       # Claude Code用設定
 ├── SYSTEM_PROMPT.md # 汎用システムプロンプト
@@ -1412,9 +1412,9 @@ def generate_airlock_docs(airlock_path: Path, files: list, session_id: str = "")
 
 {file_list}
 
-## 匿名化IDについて
+## 仮名化IDについて
 
-データ内の以下の形式は匿名化された個人情報です：
+データ内の以下の形式は仮名化された個人情報です：
 
 | 形式 | 意味 | 例 |
 |------|------|-----|
@@ -1429,7 +1429,7 @@ def generate_airlock_docs(airlock_path: Path, files: list, session_id: str = "")
 ## ワークフロー
 
 1. **分析**: `data/` 内のファイルをAIツールで分析
-2. **出力**: 結果を `output/` に保存（匿名化IDはそのまま維持）
+2. **出力**: 結果を `output/` に保存（仮名化IDはそのまま維持）
 3. **復元**: プロジェクトルートで `dataairlock` を実行し「結果を復元」を選択
 
 ## 注意事項
@@ -1443,27 +1443,27 @@ def generate_airlock_docs(airlock_path: Path, files: list, session_id: str = "")
     # CLAUDE.md（Claude Code用）
     claude_content = f"""# DataAirlock セキュア環境
 
-このワークスペースには**匿名化された機密データ**が含まれています。
+このワークスペースには**仮名化された機密データ**が含まれています。
 以下のルールを厳守してください。
 
 ## 絶対ルール
 
 ### 禁止事項
 - **このディレクトリ外のファイルを読み込まない**（`../` へのアクセス禁止）
-- **匿名化IDから元の値を推測・復元しようとしない**
-- **匿名化IDを変更・削除しない**
+- **仮名化IDから元の値を推測・復元しようとしない**
+- **仮名化IDを変更・削除しない**
 - **データを外部に送信しない**
 
 ### 必須事項
 - 結果ファイルは必ず `output/` ディレクトリに保存する
-- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持する
-- 新しい列を追加する場合も、既存の匿名化ID列は保持する
+- 仮名化ID（`PERSON_001_XXXX` 形式）はそのまま維持する
+- 新しい列を追加する場合も、既存の仮名化ID列は保持する
 
 ## 利用可能なファイル
 
 {file_list}
 
-## 匿名化IDの形式
+## 仮名化IDの形式
 
 | プレフィックス | 意味 |
 |--------------|------|
@@ -1485,7 +1485,7 @@ df.to_csv("output/result.csv", index=False, encoding="utf-8-sig")
 
 ## 復元について
 
-匿名化IDの復元はこのワークスペース外で行われます。
+仮名化IDの復元はこのワークスペース外で行われます。
 あなたは復元処理を行う必要はありません。
 """
 
@@ -1494,15 +1494,15 @@ df.to_csv("output/result.csv", index=False, encoding="utf-8-sig")
 
 # 環境説明
 
-このディレクトリには匿名化された機密データが含まれています。
-個人情報は `PERSON_001_A7K2` のような形式で匿名化されています。
+このディレクトリには仮名化された機密データが含まれています。
+個人情報は `PERSON_001_A7K2` のような形式で仮名化されています。
 
 # 厳守ルール
 
 1. このディレクトリ外のファイルを絶対に読み込まないでください
-2. 匿名化IDから元の値を推測しようとしないでください
+2. 仮名化IDから元の値を推測しようとしないでください
 3. 結果は必ず output/ ディレクトリに保存してください
-4. 匿名化ID列は削除・変更せず、そのまま維持してください
+4. 仮名化ID列は削除・変更せず、そのまま維持してください
 
 # 禁止コマンド例
 
@@ -1520,7 +1520,7 @@ df.to_csv("output/result.csv", index=False, encoding="utf-8-sig")
 2. 分析・処理を行う
 3. 結果を output/ に保存する
 
-匿名化IDの復元は別途行われるため、あなたが行う必要はありません。
+仮名化IDの復元は別途行われるため、あなたが行う必要はありません。
 """
 
     # PROMPT.md（分析依頼テンプレート）
@@ -1548,7 +1548,7 @@ df.to_csv("output/result.csv", index=False, encoding="utf-8-sig")
 
 ## 注意
 
-- 匿名化ID（`PERSON_001_XXXX` 形式）はそのまま維持してください
+- 仮名化ID（`PERSON_001_XXXX` 形式）はそのまま維持してください
 - このディレクトリ外のファイルにはアクセスしないでください
 """
 
@@ -1836,14 +1836,14 @@ def flow_folder_project():
     if not password:
         return
 
-    # 匿名化実行
-    console.print("\n[bold]匿名化を実行中...[/bold]")
+    # 仮名化実行
+    console.print("\n[bold]仮名化を実行中...[/bold]")
 
     airlock_path = _init_workspace(project_dir)
     mappings_path = _get_mappings_path(project_dir)
 
     # ワークスペース全体で共通のセッションIDとマッピングを使用
-    # これにより同じ値には同じ匿名化IDが割り当てられる
+    # これにより同じ値には同じ仮名化IDが割り当てられる
     workspace_session_id = generate_session_id()
     global_mapping: dict[str, dict[str, str]] = {}
 
@@ -1888,12 +1888,12 @@ def flow_folder_project():
             }
 
             if file_actions:
-                anonymized_df = df.copy()
+                pseudonymized_df = df.copy()
                 for col_name, action in file_actions.items():
                     if col_name in file_pii:
                         single_col_pii = {col_name: file_pii[col_name]}
-                        anonymized_df, col_mapping = anonymize_dataframe(
-                            anonymized_df,
+                        pseudonymized_df, col_mapping = pseudonymize_dataframe(
+                            pseudonymized_df,
                             single_col_pii,
                             strategy=action,
                             session_id=workspace_session_id,
@@ -1903,12 +1903,12 @@ def flow_folder_project():
                         if col_name in col_mapping:
                             file_mapping[col_name] = col_mapping[col_name]
             else:
-                anonymized_df = df
+                pseudonymized_df = df
 
             # 出力（ディレクトリ構造を維持）
             output_path = airlock_path / "data" / scanned_file.relative_path.with_suffix(".csv")
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            save_dataframe(anonymized_df, output_path)
+            save_dataframe(pseudonymized_df, output_path)
 
             # マッピングファイル保存（ファイル個別）
             mapping_name = relative_to_mapping_name(scanned_file.relative_path)
@@ -1920,7 +1920,7 @@ def flow_folder_project():
 
             config["files"][str(scanned_file.relative_path)] = {
                 "original": str(scanned_file.path),
-                "anonymized": str(output_path.relative_to(airlock_path)),
+                "pseudonymized": str(output_path.relative_to(airlock_path)),
                 "mapping": mapping_name,
                 "pii_columns": list(file_actions.keys()),
             }
@@ -1934,14 +1934,14 @@ def flow_folder_project():
 
     # ドキュメントファイルの処理
     if doc_files:
-        from dataairlock.document_anonymizer import anonymize_document
+        from dataairlock.document_pseudonymizer import pseudonymize_document
 
         for scanned_file in doc_files:
             try:
                 output_path = airlock_path / "data" / scanned_file.relative_path
                 output_path.parent.mkdir(parents=True, exist_ok=True)
 
-                result, doc_mapping = anonymize_document(
+                result, doc_mapping = pseudonymize_document(
                     scanned_file.path,
                     output_path,
                     doc_strategy,
@@ -1969,7 +1969,7 @@ def flow_folder_project():
 
                 config["files"][str(scanned_file.relative_path)] = {
                     "original": str(scanned_file.path),
-                    "anonymized": str(output_path.relative_to(airlock_path)),
+                    "pseudonymized": str(output_path.relative_to(airlock_path)),
                     "mapping": mapping_name,
                     "type": "document",
                     "pii_count": result.total_matches,
@@ -1987,7 +1987,7 @@ def flow_folder_project():
 
     # マッピングレポート生成（プロジェクトルートに配置）
     if all_file_mappings:
-        report_path = _generate_anonymization_report(project_dir, all_file_mappings, password)
+        report_path = _generate_pseudonymization_report(project_dir, all_file_mappings, password)
         console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
 
     # 設定保存
@@ -2305,12 +2305,12 @@ def flow_add_folder():
             }
 
             if file_actions:
-                anonymized_df = df.copy()
+                pseudonymized_df = df.copy()
                 for col_name, action in file_actions.items():
                     if col_name in file_pii:
                         single_col_pii = {col_name: file_pii[col_name]}
-                        anonymized_df, col_mapping = anonymize_dataframe(
-                            anonymized_df,
+                        pseudonymized_df, col_mapping = pseudonymize_dataframe(
+                            pseudonymized_df,
                             single_col_pii,
                             strategy=action,
                             session_id=workspace_session_id,
@@ -2320,12 +2320,12 @@ def flow_add_folder():
                         if col_name in col_mapping:
                             file_mapping[col_name] = col_mapping[col_name]
             else:
-                anonymized_df = df
+                pseudonymized_df = df
 
             # 出力（ディレクトリ構造を維持）
             output_path = airlock_path / "data" / scanned_file.relative_path.with_suffix(".csv")
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            save_dataframe(anonymized_df, output_path)
+            save_dataframe(pseudonymized_df, output_path)
 
             # マッピングファイル保存（ファイル個別）
             mapping_name = relative_to_mapping_name(scanned_file.relative_path)
@@ -2337,7 +2337,7 @@ def flow_add_folder():
 
             config["files"][str(scanned_file.relative_path)] = {
                 "original": str(scanned_file.path),
-                "anonymized": str(output_path.relative_to(airlock_path)),
+                "pseudonymized": str(output_path.relative_to(airlock_path)),
                 "mapping": mapping_name,
                 "pii_columns": list(file_actions.keys()),
             }
@@ -2351,14 +2351,14 @@ def flow_add_folder():
 
     # ドキュメントファイルの処理
     if doc_files:
-        from dataairlock.document_anonymizer import anonymize_document
+        from dataairlock.document_pseudonymizer import pseudonymize_document
 
         for scanned_file in doc_files:
             try:
                 output_path = airlock_path / "data" / scanned_file.relative_path
                 output_path.parent.mkdir(parents=True, exist_ok=True)
 
-                result, doc_mapping = anonymize_document(
+                result, doc_mapping = pseudonymize_document(
                     scanned_file.path,
                     output_path,
                     doc_strategy,
@@ -2386,7 +2386,7 @@ def flow_add_folder():
 
                 config["files"][str(scanned_file.relative_path)] = {
                     "original": str(scanned_file.path),
-                    "anonymized": str(output_path.relative_to(airlock_path)),
+                    "pseudonymized": str(output_path.relative_to(airlock_path)),
                     "mapping": mapping_name,
                     "type": "document",
                     "pii_count": result.total_matches,
@@ -2404,7 +2404,7 @@ def flow_add_folder():
 
     # マッピングレポート生成（プロジェクトルートに配置）
     if all_file_mappings:
-        report_path = _generate_anonymization_report(project_dir, all_file_mappings, password)
+        report_path = _generate_pseudonymization_report(project_dir, all_file_mappings, password)
         console.print(f"  [dim]📋 マッピングレポート: {report_path.name}[/dim]")
 
     # 設定保存

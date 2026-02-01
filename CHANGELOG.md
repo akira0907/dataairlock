@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-01
+
+### Changed
+- License changed from AGPL-3.0 to MIT
+- Terminology updated from "anonymization" to "pseudonymization" throughout
+- Renamed `anonymizer.py` to `pseudonymizer.py`
+- Renamed `document_anonymizer.py` to `document_pseudonymizer.py`
+- Renamed CLI command `anonymize` to `pseudonymize`
+- Renamed CLI command `anonymize-doc` to `pseudonymize-doc`
+
+### Added
+- SECURITY.md with security policy and vulnerability reporting guidelines
+- Legal disclaimer section in README.md and README_en.md
+
+### Fixed
+- Updated all Japanese text from "匿名化" to "仮名化" for consistency
+
 ## [0.3.0] - 2025-01-30
 
 ### Added
@@ -44,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for multiple AI tools (Claude Code, Codex CLI, Aider)
 - Streamlit web interface (optional)
 
+[0.4.0]: https://github.com/akira0907/dataairlock/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/akira0907/dataairlock/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/akira0907/dataairlock/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/akira0907/dataairlock/releases/tag/v0.1.0

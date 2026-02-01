@@ -232,7 +232,7 @@ def create_profile_from_actions(
     )
 
 
-# PIIタイプ名のマッピング（anonymizer.py の PIIType と対応）
+# PIIタイプ名のマッピング（pseudonymizer.py の PIIType と対応）
 PII_TYPE_MAPPING = {
     "patient_id": "PATIENT_ID",
     "name": "NAME",

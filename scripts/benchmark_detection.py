@@ -19,7 +19,7 @@ import pandas as pd
 # プロジェクトのsrcを追加
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from dataairlock.anonymizer import detect_pii_columns, PIIType
+from dataairlock.pseudonymizer import detect_pii_columns, PIIType
 from dataairlock.hybrid_detector import (
     HybridPIIDetector,
     DetectionMode,

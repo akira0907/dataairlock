@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dataairlock"
-version = "0.3.1"
+version = "0.4.0"
 description = "個人情報を仮名化してクラウドLLMに安全に渡すためのツール"
 readme = "README.md"
-license = "AGPL-3.0"
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     {name = "akira0907", email = "akira0907@users.noreply.github.com"},

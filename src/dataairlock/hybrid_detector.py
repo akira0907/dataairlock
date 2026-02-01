@@ -11,7 +11,7 @@ from typing import Literal
 
 import pandas as pd
 
-from .anonymizer import (
+from .pseudonymizer import (
     PIIColumnResult,
     PIIDetector,
     PIIType,
