@@ -49,6 +49,14 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 
+# VSCode互換モード（airlock/.mapping + [TYPE_001]）
+try:
+    from dataairlock.vscode_compat.cli import vscode_app
+    app.add_typer(vscode_app, name="vscode")
+except Exception:
+    # 依存関係不整合などで読み込みに失敗しても、既存CLIは動作させる
+    pass
+
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
@@ -128,8 +136,8 @@ def generate_prompt_file(
 
 ## 重要な指示
 - 処理結果はCSV形式で出力してください
-- ANON_で始まるIDはそのまま保持してください
-- 新しい列を追加してもANON_ID列は削除しないでください
+- DataAirlockの仮名化ID（例: PERSON_001_A7K2, PHONE_003_A7K2 等）はそのまま保持してください
+- 既存の列やセル内に含まれる仮名化IDは削除・変更しないでください
 
 ## 依頼内容
 [ここに依頼を記述]
@@ -1386,7 +1394,13 @@ def workspace(
             password = get_password_interactive(confirm=False)
 
         # 復元に使用するマッピングを収集
-        all_mappings: dict = {}
+        all_mappings: dict = {
+            "metadata": {
+                "combined": True,
+                "source": "workspace --restore",
+                "created_at": datetime.now().isoformat(),
+            }
+        }
         mapping_dir = _get_mappings_path(project_dir)
 
         for mapping_file in mapping_dir.glob("*.mapping.enc"):
@@ -1394,9 +1408,15 @@ def workspace(
                 mapping_data = load_mapping(mapping_file, password)
                 # 全マッピングをマージ
                 for col_name, col_info in mapping_data.items():
-                    if col_name != "metadata" and "values" in col_info:
-                        if col_name not in all_mappings:
-                            all_mappings[col_name] = col_info
+                    if col_name == "metadata":
+                        continue
+                    if not isinstance(col_info, dict):
+                        continue
+                    if "values" not in col_info:
+                        continue
+                    # 同名列の上書きを避けるため、マッピングファイル名を含むキーにする
+                    unique_key = f"{mapping_file.name}:{col_name}"
+                    all_mappings[unique_key] = col_info
             except Exception as e:
                 console.print(f"[yellow]警告: {mapping_file.name} の読み込みに失敗: {e}[/yellow]")
 
@@ -1467,16 +1487,27 @@ def workspace(
             password = get_password_interactive(confirm=False)
 
         # マッピングを収集
-        all_mappings: dict = {}
+        all_mappings: dict = {
+            "metadata": {
+                "combined": True,
+                "source": "workspace --restore-all",
+                "created_at": datetime.now().isoformat(),
+            }
+        }
         mapping_dir = _get_mappings_path(project_dir)
 
         for mapping_file in mapping_dir.glob("*.mapping.enc"):
             try:
                 mapping_data = load_mapping(mapping_file, password)
                 for col_name, col_info in mapping_data.items():
-                    if col_name != "metadata" and "values" in col_info:
-                        if col_name not in all_mappings:
-                            all_mappings[col_name] = col_info
+                    if col_name == "metadata":
+                        continue
+                    if not isinstance(col_info, dict):
+                        continue
+                    if "values" not in col_info:
+                        continue
+                    unique_key = f"{mapping_file.name}:{col_name}"
+                    all_mappings[unique_key] = col_info
             except Exception as e:
                 console.print(f"[yellow]警告: {mapping_file.name} の読み込みに失敗: {e}[/yellow]")
 

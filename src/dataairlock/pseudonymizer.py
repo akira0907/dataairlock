@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import os
 import random
 import re
 import string
@@ -419,7 +420,8 @@ YEAR_PATTERN_JAPANESE = re.compile(r"(明治|大正|昭和|平成|令和)(\d{1,2
 def _derive_key_from_password(password: str, salt: bytes | None = None) -> tuple[bytes, bytes]:
     """パスワードからFernet用の鍵を導出"""
     if salt is None:
-        salt = hashlib.sha256(password.encode()).digest()[:16]
+        # ランダムsalt（保存ファイル先頭に同梱するため復号可能）
+        salt = os.urandom(16)
     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000, dklen=32)
     fernet_key = base64.urlsafe_b64encode(key)
     return fernet_key, salt

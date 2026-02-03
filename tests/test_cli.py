@@ -191,7 +191,8 @@ class TestPseudonymizeCommand:
 
         assert "仮名化済みデータ" in prompt_content
         assert "test_data.csv" in prompt_content
-        assert "ANON_" in prompt_content
+        assert "仮名化ID" in prompt_content
+        assert "PERSON_" in prompt_content
 
 
 class TestRestoreCommand:
