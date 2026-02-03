@@ -81,8 +81,8 @@ class FileProcessor:
     def _iter_files(self, source_folder: Path) -> list[Path]:
         files: list[Path] = []
         for root, dirnames, filenames in os.walk(source_folder):
-            dirnames[:] = [d for d in dirnames if d not in DEFAULT_EXCLUDE_DIRS]
-            for name in filenames:
+            dirnames[:] = sorted([d for d in dirnames if d not in DEFAULT_EXCLUDE_DIRS])
+            for name in sorted(filenames):
                 files.append(Path(root) / name)
         return files
 
@@ -106,6 +106,13 @@ class FileProcessor:
         pii_found = 0
 
         mapping = SessionMapping(entries={}, reverse_index={}, counters={t: 0 for t in PIIType})
+        existing_mapping_path = MappingStorage.mapping_path(airlock_base, source_name)
+        if existing_mapping_path.exists():
+            try:
+                mapping = MappingStorage.load_mapping(existing_mapping_path)
+            except Exception as e:
+                errors.append(f"{existing_mapping_path}: 既存マッピングの読み込みに失敗: {e}")
+                mapping = SessionMapping(entries={}, reverse_index={}, counters={t: 0 for t in PIIType})
 
         for file_path in self._iter_files(source_folder):
             try:
