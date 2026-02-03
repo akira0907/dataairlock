@@ -32,10 +32,19 @@ class MappingStorage:
         mapping_dir.mkdir(parents=True, exist_ok=True)
 
         now = datetime.now(timezone.utc).isoformat()
+        path = cls.mapping_path(airlock_base, source_name)
+        created_at = now
+        if path.exists():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict) and isinstance(existing.get("createdAt"), str):
+                    created_at = existing["createdAt"]
+            except Exception:
+                pass
 
         stored: StoredMapping = {
             "version": cls.VERSION,
-            "createdAt": now,
+            "createdAt": created_at,
             "updatedAt": now,
             "sourceFolder": str(source_folder),
             "outputFolder": str(output_folder),
@@ -50,7 +59,6 @@ class MappingStorage:
             ],
         }
 
-        path = cls.mapping_path(airlock_base, source_name)
         path.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 
